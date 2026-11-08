@@ -16,6 +16,7 @@ Open [http://localhost:3000](http://localhost:3000). The current app is a founda
 ## Checks
 
 ```bash
+npm test
 npm run lint
 npm run typecheck
 npm run build
@@ -25,7 +26,9 @@ GitHub Actions runs the same checks for pull requests and pushes to `main`.
 
 ## Configuration
 
-No environment variables are needed for the foundation preview. `.env.example` contains placeholders for future integration only; never commit local environment files, credentials, or real financial data.
+Copy `.env.example` to `.env.local`, then follow the [Google OAuth and Supabase setup guide](docs/authentication.md). The template contains placeholders only; never commit `.env.local`, credentials, service-role keys, or real financial data.
+
+The Supabase URL and publishable key are public project identifiers. `APP_URL` and `SUPABASE_OWNER_USER_ID` are read only by server code. No service-role key is required.
 
 ## Contribution workflow
 

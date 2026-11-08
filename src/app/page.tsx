@@ -1,4 +1,7 @@
 import { AppShell, Icon } from "@/components/app-shell";
+import { requireOwner } from "@/lib/auth/server";
+
+export const dynamic = "force-dynamic";
 
 const overviewCards = [
   { label: "Tracked assets", detail: "Available after setup" },
@@ -31,26 +34,28 @@ function Principle({ number, title, children }: { number: string; title: string;
   );
 }
 
-export default function HomePage() {
+export default async function HomePage() {
+  const owner = await requireOwner();
+
   return (
-    <AppShell>
+    <AppShell email={owner.email}>
       <div className="space-y-7 sm:space-y-8">
         <section aria-labelledby="page-title" className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
           <div className="max-w-2xl">
             <p className="flex items-center gap-2 text-[12px] font-medium text-muted">
               <span className="size-1.5 rounded-full bg-muted" />
-              Personal finance · workspace preview
+              Personal finance · private workspace
             </p>
             <h1 id="page-title" className="mt-4 max-w-[650px] text-[38px] font-medium leading-[1.08] tracking-[-0.055em] text-ink sm:text-[48px] lg:text-[56px]">
               A clearer view of your money.
             </h1>
             <p className="mt-4 max-w-xl text-[14px] leading-7 text-muted sm:text-[15px]">
-              A calm foundation for understanding the things that matter. Your real financial data is not connected in this preview.
+              Your real financial data is not connected. This workspace contains no sample balances or transactions.
             </p>
           </div>
           <span className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2 text-[12px] font-medium text-muted">
             <Icon className="size-4 text-muted" name="shield" />
-            No account connected
+            Google identity verified
           </span>
         </section>
 
@@ -119,8 +124,8 @@ export default function HomePage() {
         </div>
 
         <footer className="flex flex-col gap-2 border-t border-border pt-5 text-[12px] text-muted sm:flex-row sm:items-center sm:justify-between">
-          <span>Faylo foundation preview</span>
-          <span>Authentication, storage, and financial actions are not connected.</span>
+          <span>Faylo private workspace</span>
+          <span>Financial storage and actions are not connected.</span>
         </footer>
       </div>
     </AppShell>
