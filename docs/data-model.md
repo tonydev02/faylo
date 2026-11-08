@@ -40,11 +40,11 @@
 - `account_id` FK to `accounts`
 - `amount_minor` signed: positive in, negative out
 - `currency_code` matching the account
-- `posted_at`, `created_at`
+- `recorded_at` server timestamp for persistence; use the parent transaction's `occurred_at` for economic ordering
 
-**Balance formula, bank/cash:** `opening_balance + SUM(account_entries after opening_as_of)`. Reconciliation is expressed as a `balance_adjustment` transaction with a corresponding entry, so the history remains explainable.
+**Balance formula, bank/cash:** At an as-of instant, `opening_balance + SUM(account_entries)` for posted transactions with `occurred_on >= opening_as_of` and `occurred_at <= as_of`.
 
-**Balance formula, investment:** `latest manual valuation snapshot (or opening balance) + account_entries after that valuation's effective timestamp`. A new valuation is an **absolute market-value snapshot**, not an additive adjustment. This avoids counting funding twice while making updated portfolio values authoritative.
+**Balance formula, investment:** Latest manual valuation snapshot at or before `as_of` (or opening balance) + account entries whose parent transaction occurred after that snapshot and no later than `as_of`. The cutoff is strict (`occurred_at > valued_at`); an entry at the exact snapshot instant is treated as already reflected in the absolute snapshot.
 
 ### Payment methods (no tracked credit-card balances)
 
@@ -68,7 +68,7 @@ For `credit_card`, `linked_account_id` is not treated as an automatic debit sour
 **`transactions`**
 - `id` UUID PK, `user_id` FK
 - `type`: `income` | `expense` | `transfer` | `card_settlement` | `balance_adjustment`
-- `occurred_at` timestamp and/or user's local booking date
+- `occurred_at` exact economic effective instant and `occurred_on` local booking/reporting date in the user's configured timezone. Date-only input maps to local midnight; when both are supplied, the date must match the instant in that timezone.
 - `amount_minor`, `currency_code` for original expense/income amount (nullable for multi-leg transfer)
 - `category_id` nullable FK, only for income/expense
 - `payment_method_id` nullable FK
