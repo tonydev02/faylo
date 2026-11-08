@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Faylo — a clearer view of your money",
-  description: "A responsive personal finance workspace preview. Accounts, transactions, authentication, and storage are not connected yet.",
+  title: "Faylo — private finance workspace",
+  description: "A private personal-finance workspace protected by Google sign-in.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { signOut } from "@/lib/auth/actions";
 
 type IconName = "mark" | "overview" | "activity" | "accounts" | "insights" | "settings" | "arrow" | "shield" | "spark";
 
@@ -123,14 +124,14 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
   );
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children, email }: { children: ReactNode; email: string | null }) {
   return (
     <div className="min-h-screen bg-canvas text-ink">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col border-r border-border bg-chrome px-5 pb-5 pt-7 lg:flex">
         <Brand />
         <div className="mt-11 flex items-center justify-between px-3">
           <span className="text-[12px] font-medium text-muted">Workspace</span>
-          <span className="rounded-full border border-border bg-raised px-2.5 py-1 text-[11px] font-medium text-muted">Preview</span>
+          <span className="rounded-full border border-border bg-raised px-2.5 py-1 text-[11px] font-medium text-muted">Private</span>
         </div>
         <div className="mt-4">
           <Navigation />
@@ -143,12 +144,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
           <div className="rounded-2xl border border-border bg-surface p-4">
             <div className="flex items-center gap-2 text-[12px] font-medium text-muted">
-              <span className="size-1.5 rounded-full bg-muted/70" />
-              Local foundation
+              <span className="size-1.5 rounded-full bg-mint" />
+              Verified identity
             </div>
-            <p className="mt-2 text-[12px] leading-5 text-muted">Authentication and account storage are not connected.</p>
+            <p className="mt-2 text-[12px] leading-5 text-muted">Server-verified access for the approved Google account.</p>
           </div>
-          <p className="px-1 text-[12px] text-muted">Faylo · A calmer way to see your money</p>
+          <p className="px-1 text-[12px] text-muted">Faylo · Private workspace</p>
         </div>
       </aside>
 
@@ -161,14 +162,15 @@ export function AppShell({ children }: { children: ReactNode }) {
             <p className="hidden text-[13px] text-muted lg:block">
               Your space <span className="mx-2 text-muted/70">/</span> <span className="text-ink/85">Overview</span>
             </p>
-            <div className="flex items-center gap-3">
-              <span className="hidden items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] font-medium text-muted sm:inline-flex">
-                <span className="size-1.5 rounded-full bg-muted/70" />
-                Foundation preview
+            <div className="flex items-center gap-2 sm:gap-3">
+              <span className="hidden max-w-[260px] truncate text-[12px] text-muted sm:inline" title={email ?? undefined}>
+                Signed in · {email ?? "Owner"}
               </span>
-              <span aria-label="No account connected" className="flex size-9 items-center justify-center rounded-full border border-border bg-surface text-muted">
-                <Icon className="size-[17px]" name="shield" />
-              </span>
+              <form action={signOut}>
+                <button className="inline-flex min-h-11 items-center rounded-xl border border-border bg-surface px-3 text-[12px] font-medium text-ink transition-colors hover:bg-raised" type="submit">
+                  Sign out
+                </button>
+              </form>
             </div>
           </div>
         </header>
