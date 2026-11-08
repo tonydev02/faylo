@@ -111,6 +111,6 @@ No historical transaction reconstruction; no tracked credit-card liabilities, st
 
 - **Product name:** Faylo; company-umbrella concept: Momentum (not incorporated or a legal claim).
 - **Brand personality:** calm, intelligent, approachable; friendly personal-finance companion.
-- **UI direction:** minimalist, mobile-first, modern dark forest green; background `#0B211B`, forest `#174A39`, restrained accent `#80C7A2`, text `#EFF8F0`.
+- **UI direction (updated 2026-11-08):** minimalist, mobile-first, **black-first with green accents**: near-black canvas `#0B0B0C`, charcoal surfaces `#171717`, off-white text `#F1F3F2`, forest accent `#174A39`, restrained mint highlights `#80C7A2`. See [Design System v0.2.1](design-system.md), which supersedes the earlier all-green canvas interpretation.
 - **Design skill:** OMP must locate/read/use the installed Taste skill before creating or revising user-facing UI, and report if not available.
 - **Finance semantics beat decoration:** accessible contrast, mobile ergonomics, legible numbers and obvious warnings take priority over visual effects.
