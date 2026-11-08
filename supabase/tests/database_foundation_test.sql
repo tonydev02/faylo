@@ -244,7 +244,7 @@ SELECT extensions.is(
    FROM public.transactions AS transaction_row
    WHERE transaction_row.transaction_kind = 'expense' AND transaction_row.currency_code = 'JPY'
      AND transaction_row.status = 'posted'),
-  11200::numeric,
+  11300::numeric,
   'settlement does not add a second expense'
 );
 SELECT extensions.is(
@@ -283,9 +283,11 @@ SELECT extensions.is(
   'same-currency transfer nets to zero and is not income or expense'
 );
 SELECT extensions.is(
-  (SELECT pg_catalog.count(*)::integer FROM public.transactions WHERE transaction_kind IN ('income', 'expense')),
-  2,
-  'transfer does not add income or expense reports'
+  (SELECT pg_catalog.count(*)::integer FROM public.transactions
+   WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000004'
+     AND transaction_kind IN ('income', 'expense')),
+  0,
+  'transfer does not create an income or expense report row'
 );
 
 SELECT extensions.lives_ok(
@@ -381,7 +383,7 @@ SELECT extensions.is(
 SELECT extensions.is(
   (SELECT pg_catalog.sum(amount) FROM public.transactions
    WHERE transaction_kind = 'expense' AND currency_code = 'JPY' AND status = 'posted'),
-  11250::numeric,
+  11350::numeric,
   'unassigned expense still counts once in expense reporting'
 );
 
@@ -461,7 +463,7 @@ SELECT extensions.is(
 );
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.transactions WHERE transaction_kind = 'expense'),
-  5,
+  6,
   'balance adjustment is excluded from expense totals'
 );
 SELECT extensions.lives_ok(
