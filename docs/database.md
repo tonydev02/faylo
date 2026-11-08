@@ -10,15 +10,17 @@ This schema implements the six Issue #3 tables only. It is a PostgreSQL/Supabase
 | `accounts` | Bank, cash, and investment balance-tracked accounts. The opening amount and inclusive `opening_as_of` date are immutable. Currency and account kind are also immutable; archive instead of deleting a referenced account. Credit cards are not accounts. |
 | `payment_methods` | Cash, debit, credit-card, bank-transfer, and other payment methods. A credit card cannot link to an account. Method type and linked account are immutable; archive instead of deleting a referenced method. |
 | `categories` | Income or expense categories with an optional same-owner, same-kind parent. Kind and parent are immutable; archive instead of deleting a referenced category. |
-| `transactions` | Immutable economic events with a per-owner idempotency key. `income`, `expense`, and `card_settlement` have positive amounts; `balance_adjustment` has a signed amount and mandatory reason; `transfer` has no aggregate amount because its legs may use different currencies. |
-| `account_entries` | Immutable, signed balance movements. The composite foreign keys bind each entry to the same owner's transaction and to the account's currency. Entries are written only by `post_transaction`. |
+| `transactions` | Immutable economic events with a per-owner idempotency key; `occurred_at` is the economic effective instant and `occurred_on` its local booking/reporting date. |
+| `account_entries` | Immutable, signed balance movements. The composite foreign keys bind each entry to the same owner's transaction and to the account's currency. `recorded_at` is persistence time, not event time; entries are written only by `post_transaction`. |
 
 Every user-owned row references `auth.users`. Composite `(user_id, id)` foreign keys prevent cross-owner account, category, payment-method, transaction, and entry references. Foreign keys restrict deletion of referenced financial records; no cascade can silently erase a posted event.
 
 ### Event semantics
 
-- Account movements are dated inclusively: `occurred_on >= accounts.opening_as_of`. An event posted before an account's opening date is rejected.
-- Balances are derived as `opening_balance + SUM(account_entries.amount)` for entries whose parent transaction is `posted`. `voided` events and their retained entries are excluded.
+- Account movements are dated inclusively: `occurred_on >= accounts.opening_as_of`. The opening date is interpreted in the configured user timezone.
+- The RPC accepts `p_occurred_on` and optional `p_occurred_at`. The user's timezone (default `Asia/Tokyo`) determines the local date. If the timestamp is omitted, it is local midnight on `p_occurred_on`; if supplied, it must fall on that date in the configured timezone. Send explicit timestamps with a timezone offset. Date-only events on the same day share the midnight fallback and have no finer ordering; provide an exact time when ordering against a same-day valuation matters.
+- Balance-as-of queries include only `posted` transactions with `occurred_on >= opening_as_of` and `occurred_at <= as_of`; the as-of value is an instant (normally the current time for the current balance). Future-effective posted events are excluded until their effective time. Never use `recorded_at` or transaction `created_at` as economic time.
+- For a future investment valuation query, select the latest snapshot with `valued_at <= as_of`, then add posted account entries with `transaction.occurred_at > valued_at AND transaction.occurred_at <= as_of`. The strict lower bound makes an exact-time tie part of the absolute snapshot, not an additional movement. Valuation storage is not part of this issue.
 - Income requires one positive entry when assigned. Expenses paid by cash/debit or another assigned method require one matching negative entry. An intentionally unassigned income/expense is represented by a null payment method and no entries; it still counts in income/expense reports and must be surfaced for reconciliation. A no-entry event cannot predate the earliest account opening date.
 - A credit-card expense requires a credit-card payment method and has no account entry. It remains an expense, not a liability balance.
 - A `card_settlement` requires one negative bank/cash entry and has no category. It changes the account balance but is not an income or expense.
@@ -40,7 +42,7 @@ The schema does not add a text-returning read API. Future consumers must expose 
 
 Clients can read `transactions` and `account_entries`, but cannot insert, update, or delete them directly. The authenticated owner calls `public.post_transaction(...)`; the security-definer RPC validates the caller, event/category/payment-method compatibility, account ownership/currency/opening date, and entry count/sign, then inserts the event and all entries in one PostgreSQL statement/transaction. Any constraint or entry error rolls the entire call back.
 
-The caller supplies a UUID `p_idempotency_key` and must reuse it for retries of the same logical operation. A repeated key with the same normalized event fields and exact account legs returns the original transaction ID without adding rows. Reusing a key with different contents raises a unique-violation error. A retry after voiding returns the original voided event; it never resurrects it.
+The caller supplies a UUID `p_idempotency_key` and must reuse it for retries of the same logical operation. A repeated key with the same normalized event fields, exact `occurred_at`, and exact account legs returns the original transaction ID without adding rows. Reusing a key with different contents—including a different effective timestamp—raises a unique-violation error. A retry after voiding returns the original voided event; it never resurrects it.
 
 Posted events and entries are append-only. `public.void_transaction(id, reason)` permits one `posted` → `voided` transition, records `voided_at`, `voided_by`, and a mandatory reason, and retains the original transaction and entries for audit. A second void fails. Correct a mistake by voiding the original and posting a new event with a new idempotency key; do not edit balances or historical entries.
 
@@ -82,7 +84,7 @@ supabase stop --no-backup
 
 `supabase db reset` rebuilds the local database from the versioned migrations and is the clean-database migration check. Do not add `--linked` to local reset commands. `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` cover the application checks. GitHub Actions runs a separate local Supabase/PostgreSQL integration job on pull requests. The local SMTP/Mailpit service is disabled in `supabase/config.toml` because the current Google-only authentication flow does not use email; enable it if email-flow tests are added.
 
-The pgTAP suite uses only synthetic Auth identities and financial values inside a rolled-back transaction. It covers RLS for owner, non-owner, and anonymous roles; cross-owner FKs; exact JPY/VND/USD values; opening dates; category/payment semantics; cash/debit and credit-card posting; settlements; same- and cross-currency transfers; atomic rollback; retry conflicts; adjustments; voiding; and the direct-write boundary.
+The pgTAP suite uses only synthetic Auth identities and financial values inside a rolled-back transaction. It covers RLS for owner, non-owner, and anonymous roles; cross-owner FKs; exact JPY/VND/USD values; opening dates; effective-time/date-only conversion, same-day valuation ordering, future-effective as-of balances, retry conflicts, payment-method/account mismatch, archived accounts and methods, category/payment semantics; cash/debit and credit-card posting; settlements; same- and cross-currency transfers; atomic rollback; adjustments; voiding; and the direct-write boundary.
 
 ## Safe hosted deployment process
 
@@ -98,7 +100,7 @@ The hosted project was not linked, queried, or changed for Issue #3.
 
 ## Known limitations and future integration points
 
-- FX-rate tables, conversion fields, budgets, scheduled items, investment valuation snapshots, tracked liabilities, Telegram, and financial UI/services are deliberately absent. Transfers keep actual native legs but do not record an executed FX rate.
+- FX-rate tables, conversion fields, budgets, scheduled items, investment valuation snapshots, tracked liabilities, Telegram, and financial UI/services are deliberately absent. Transactions already preserve economic effective timestamps so later absolute valuations can order same-day movements correctly. Transfers keep actual native legs but do not record an executed FX rate.
 - Category hierarchy changes and account opening baselines are immutable through ordinary client grants. Use a new category/account or explicit adjustment rather than rewriting financial history.
 - Unassigned income/expenses have no balance movement. The domain service/reporting UI must surface them for reconciliation and must distinguish credit-card expenses from unassigned expenses.
 - The currency scale mapping is a static ISO-style exponent map with a two-digit default, not a currency registry. Unknown codes with zero/three/four digits need an explicit mapping before use.

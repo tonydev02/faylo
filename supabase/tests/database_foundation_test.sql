@@ -188,6 +188,14 @@ SELECT extensions.throws_ok(
   )$$,
   '22023', NULL, 'posting rejects JSON numeric entry amounts instead of accepting floating-point input'
 );
+SELECT extensions.throws_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000032', 'expense', '2026-01-02', '100', 'JPY',
+    (SELECT id FROM public.categories WHERE name = 'Food'), (SELECT id FROM public.payment_methods WHERE name = 'Debit'),
+    jsonb_build_array(jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Savings'), 'amount', '-100', 'currency_code', 'JPY'))
+  )$$,
+  '23514', NULL, 'debit payment method rejects a different supplied account entry'
+);
 
 SELECT extensions.lives_ok(
   $$SELECT public.post_transaction(
@@ -196,6 +204,19 @@ SELECT extensions.lives_ok(
     jsonb_build_array(jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'), 'amount', '-1200', 'currency_code', 'JPY'))
   )$$,
   'cash/debit expense posts atomically with a matching account debit'
+);
+SELECT extensions.is(
+  (SELECT occurred_at FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000001'),
+  '2026-01-01 15:00:00+00'::timestamptz,
+  'date-only posting uses local midnight in Asia/Tokyo as its effective instant'
+);
+SELECT extensions.throws_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000039', 'expense', '2026-01-01', '1', 'JPY',
+    (SELECT id FROM public.categories WHERE name = 'Food'), NULL, '[]'::jsonb,
+    'manual', NULL, NULL, NULL, '2026-01-02 00:30:00+09'::timestamptz
+  )$$,
+  '22023', NULL, 'explicit timestamp must match the supplied local booking date'
 );
 SELECT extensions.is(
   (SELECT account.opening_balance + COALESCE(pg_catalog.sum(entry.amount) FILTER (WHERE transaction_row.status = 'posted'), 0)
@@ -308,6 +329,88 @@ SELECT extensions.is(
        OR (entry.currency_code = 'JPY' AND entry.amount = 15000))),
   2,
   'cross-currency transfer preserves both exact native amounts'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000033', 'transfer', '2026-03-15', NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Savings'), 'amount', '-100', 'currency_code', 'JPY'),
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Investment'), 'amount', '100', 'currency_code', 'JPY')
+    ),
+    'manual', NULL, NULL, NULL, '2026-03-15 09:00:00+09'::timestamptz
+  )$$,
+  'backdated transfer records an explicit economic effective time'
+);
+SELECT extensions.is(
+  (SELECT occurred_at FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000033'),
+  '2026-03-15 00:00:00+00'::timestamptz,
+  'backdated transfer preserves its original instant instead of insertion time'
+);
+SELECT extensions.ok(
+  (SELECT entry.recorded_at > transaction_row.occurred_at
+   FROM public.account_entries AS entry
+   JOIN public.transactions AS transaction_row
+     ON transaction_row.user_id = entry.user_id AND transaction_row.id = entry.transaction_id
+   WHERE transaction_row.idempotency_key = 'c0000000-0000-4000-8000-000000000033'
+   LIMIT 1),
+  'recording time remains distinct from a backdated economic time'
+);
+SELECT extensions.is(
+  public.post_transaction(
+    'c0000000-0000-4000-8000-000000000033', 'transfer', '2026-03-15', NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Savings'), 'amount', '-100', 'currency_code', 'JPY'),
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Investment'), 'amount', '100', 'currency_code', 'JPY')
+    ),
+    'manual', NULL, NULL, NULL, '2026-03-15 09:00:00+09'::timestamptz
+  ),
+  (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000033'),
+  'identical timestamp retry returns the original transaction'
+);
+SELECT extensions.throws_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000033', 'transfer', '2026-03-15', NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Savings'), 'amount', '-100', 'currency_code', 'JPY'),
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Investment'), 'amount', '100', 'currency_code', 'JPY')
+    ),
+    'manual', NULL, NULL, NULL, '2026-03-15 09:01:00+09'::timestamptz
+  )$$,
+  '23505', NULL, 'same idempotency key rejects a changed effective timestamp'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000034', 'transfer', '2026-04-01', NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Savings'), 'amount', '-1000', 'currency_code', 'JPY'),
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Investment'), 'amount', '1000', 'currency_code', 'JPY')
+    ),
+    'manual', NULL, NULL, NULL, '2026-04-01 09:00:00+09'::timestamptz
+  )$$,
+  'investment contribution before a same-day valuation is recorded precisely'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000035', 'transfer', '2026-04-01', NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Savings'), 'amount', '-2000', 'currency_code', 'JPY'),
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Investment'), 'amount', '2000', 'currency_code', 'JPY')
+    ),
+    'manual', NULL, NULL, NULL, '2026-04-01 17:00:00+09'::timestamptz
+  )$$,
+  'investment contribution after a same-day valuation is recorded precisely'
+);
+SELECT extensions.is(
+  (SELECT COALESCE(pg_catalog.sum(entry.amount), 0)
+   FROM public.account_entries AS entry
+   JOIN public.transactions AS transaction_row
+     ON transaction_row.user_id = entry.user_id AND transaction_row.id = entry.transaction_id
+   WHERE entry.account_id = (SELECT id FROM public.accounts WHERE name = 'Investment')
+     AND transaction_row.status = 'posted'
+     AND transaction_row.occurred_at > '2026-04-01 12:00:00+09'::timestamptz
+     AND transaction_row.occurred_at <= pg_catalog.transaction_timestamp()),
+  2000::numeric,
+  'same-day valuation cutoff includes only the later investment contribution'
 );
 
 SELECT extensions.lives_ok(
@@ -508,6 +611,65 @@ SELECT extensions.is(
   ),
   (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000008'),
   'retry of a voided idempotency key returns the original voided event without reposting'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000036', 'transfer', '2999-01-01', NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'), 'amount', '-100', 'currency_code', 'JPY'),
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Savings'), 'amount', '100', 'currency_code', 'JPY')
+    ),
+    'manual', NULL, NULL, NULL, '2999-01-01 09:00:00+09'::timestamptz
+  )$$,
+  'future-effective transfer can be recorded without affecting the current balance'
+);
+SELECT extensions.is(
+  (SELECT account.opening_balance + COALESCE(pg_catalog.sum(entry.amount) FILTER (
+     WHERE transaction_row.status = 'posted'
+       AND transaction_row.occurred_at <= pg_catalog.transaction_timestamp()
+   ), 0)
+   FROM public.accounts AS account
+   LEFT JOIN public.account_entries AS entry
+     ON entry.user_id = account.user_id AND entry.account_id = account.id
+   LEFT JOIN public.transactions AS transaction_row
+     ON transaction_row.user_id = entry.user_id AND transaction_row.id = entry.transaction_id
+   WHERE account.name = 'Checking'
+   GROUP BY account.id),
+  58800::numeric,
+  'future-effective account entry is excluded from a current as-of balance'
+);
+SELECT extensions.is(
+  (SELECT account.opening_balance + COALESCE(pg_catalog.sum(entry.amount) FILTER (
+     WHERE transaction_row.status = 'posted'
+       AND transaction_row.occurred_at <= '2999-01-02 00:00:00+09'::timestamptz
+   ), 0)
+   FROM public.accounts AS account
+   LEFT JOIN public.account_entries AS entry
+     ON entry.user_id = account.user_id AND entry.account_id = account.id
+   LEFT JOIN public.transactions AS transaction_row
+     ON transaction_row.user_id = entry.user_id AND transaction_row.id = entry.transaction_id
+   WHERE account.name = 'Checking'
+   GROUP BY account.id),
+  58700::numeric,
+  'future-effective account entry is included once its effective instant is reached'
+);
+UPDATE public.accounts SET status = 'archived' WHERE name = 'Late Account';
+SELECT extensions.throws_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000037', 'expense', '2026-06-02', '1', 'JPY',
+    (SELECT id FROM public.categories WHERE name = 'Food'), NULL,
+    jsonb_build_array(jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Late Account'), 'amount', '-1', 'currency_code', 'JPY'))
+  )$$,
+  '23514', NULL, 'posting rejects an archived account'
+);
+UPDATE public.payment_methods SET archived_at = pg_catalog.clock_timestamp() WHERE name = 'Debit';
+SELECT extensions.throws_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000038', 'expense', '2026-01-02', '1', 'JPY',
+    (SELECT id FROM public.categories WHERE name = 'Food'), (SELECT id FROM public.payment_methods WHERE name = 'Debit'),
+    jsonb_build_array(jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'), 'amount', '-1', 'currency_code', 'JPY'))
+  )$$,
+  '23503', NULL, 'posting rejects an archived payment method'
 );
 
 DELETE FROM public.user_preferences WHERE user_id = 'a1111111-1111-4111-8111-111111111111';

@@ -12,7 +12,8 @@ CREATE FUNCTION public.post_transaction(
   p_source public.transaction_source DEFAULT 'manual',
   p_merchant text DEFAULT NULL,
   p_note text DEFAULT NULL,
-  p_adjustment_reason text DEFAULT NULL
+  p_adjustment_reason text DEFAULT NULL,
+  p_occurred_at timestamptz DEFAULT NULL
 )
 RETURNS uuid
 LANGUAGE plpgsql
@@ -43,6 +44,8 @@ DECLARE
   v_account_status public.account_status;
   v_account_currency text;
   v_account_opening_as_of date;
+  v_timezone text;
+  v_occurred_at timestamptz;
   v_transaction_id uuid;
   v_existing public.transactions%ROWTYPE;
   v_entries_equal boolean;
@@ -53,6 +56,21 @@ BEGIN
   END IF;
   IF v_user_id IS NULL OR NOT private.is_faylo_owner() THEN
     RAISE EXCEPTION 'database owner authorization required' USING ERRCODE = '42501';
+  END IF;
+  SELECT COALESCE(
+    (SELECT preference.timezone
+     FROM public.user_preferences AS preference
+     WHERE preference.user_id = v_user_id),
+    'Asia/Tokyo'
+  )
+  INTO v_timezone;
+  v_occurred_at := COALESCE(
+    p_occurred_at,
+    (p_occurred_on::timestamp without time zone) AT TIME ZONE v_timezone
+  );
+  IF (v_occurred_at AT TIME ZONE v_timezone)::date IS DISTINCT FROM p_occurred_on THEN
+    RAISE EXCEPTION 'event timestamp must fall on the supplied local occurrence date'
+      USING ERRCODE = '22023';
   END IF;
   IF p_entries IS NULL OR pg_catalog.jsonb_typeof(p_entries) IS DISTINCT FROM 'array'
      OR pg_catalog.jsonb_array_length(p_entries) > 2 THEN
@@ -158,11 +176,11 @@ BEGIN
   FOR UPDATE;
 
   IF FOUND THEN
-    IF ROW(v_existing.transaction_kind, v_existing.occurred_on, v_existing.amount, v_existing.currency_code,
-           v_existing.category_id, v_existing.payment_method_id, v_existing.source, v_existing.merchant,
-           v_existing.note, v_existing.adjustment_reason)
+    IF ROW(v_existing.transaction_kind, v_existing.occurred_at, v_existing.occurred_on,
+           v_existing.amount, v_existing.currency_code, v_existing.category_id, v_existing.payment_method_id,
+           v_existing.source, v_existing.merchant, v_existing.note, v_existing.adjustment_reason)
        IS DISTINCT FROM
-       ROW(p_transaction_kind, p_occurred_on, v_amount, p_currency_code, p_category_id,
+       ROW(p_transaction_kind, v_occurred_at, p_occurred_on, v_amount, p_currency_code, p_category_id,
            p_payment_method_id, p_source, p_merchant, p_note, p_adjustment_reason) THEN
       RAISE EXCEPTION 'idempotency key was already used for a different financial event'
         USING ERRCODE = '23505';
@@ -321,10 +339,10 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
   INSERT INTO public.transactions (
-    user_id, idempotency_key, transaction_kind, occurred_on, amount, currency_code,
+    user_id, idempotency_key, transaction_kind, occurred_at, occurred_on, amount, currency_code,
     category_id, payment_method_id, source, merchant, note, adjustment_reason
   ) VALUES (
-    v_user_id, p_idempotency_key, p_transaction_kind, p_occurred_on, v_amount, p_currency_code,
+    v_user_id, p_idempotency_key, p_transaction_kind, v_occurred_at, p_occurred_on, v_amount, p_currency_code,
     p_category_id, p_payment_method_id, p_source, p_merchant, p_note, p_adjustment_reason
   )
   RETURNING id INTO v_transaction_id;
@@ -393,12 +411,12 @@ $$;
 
 REVOKE ALL ON FUNCTION public.post_transaction(
   uuid, public.transaction_kind, date, text, text, uuid, uuid, jsonb,
-  public.transaction_source, text, text, text
+  public.transaction_source, text, text, text, timestamptz
 ) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.void_transaction(uuid, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.post_transaction(
   uuid, public.transaction_kind, date, text, text, uuid, uuid, jsonb,
-  public.transaction_source, text, text, text
+  public.transaction_source, text, text, text, timestamptz
 ) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.void_transaction(uuid, text) TO authenticated;
 

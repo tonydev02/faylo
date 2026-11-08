@@ -16,6 +16,13 @@ _Avoid_: Current balance, initial transaction
 An economic event classified as income, expense, transfer, card settlement, or balance adjustment.
 _Avoid_: Account movement, ledger entry
 
+**Economic effective time**:
+The actual instant of a financial event, distinct from when the database stores its record.
+
+**Recording time**:
+When the database persists a transaction or account entry; it does not determine economic ordering.
+_Avoid_: Event time
+
 **Account entry**:
 A signed movement that changes one tracked account's balance and is associated with a financial transaction.
 _Avoid_: Transaction, expense

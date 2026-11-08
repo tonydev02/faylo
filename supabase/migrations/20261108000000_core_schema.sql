@@ -99,11 +99,11 @@ BEGIN
     RAISE EXCEPTION 'financial transactions are append-only; void the event instead';
   END IF;
 
-  IF ROW(NEW.id, NEW.user_id, NEW.idempotency_key, NEW.transaction_kind, NEW.occurred_on,
+  IF ROW(NEW.id, NEW.user_id, NEW.idempotency_key, NEW.transaction_kind, NEW.occurred_at, NEW.occurred_on,
          NEW.amount, NEW.currency_code, NEW.category_id, NEW.payment_method_id, NEW.source,
          NEW.merchant, NEW.note, NEW.adjustment_reason, NEW.created_at)
      IS DISTINCT FROM
-     ROW(OLD.id, OLD.user_id, OLD.idempotency_key, OLD.transaction_kind, OLD.occurred_on,
+     ROW(OLD.id, OLD.user_id, OLD.idempotency_key, OLD.transaction_kind, OLD.occurred_at, OLD.occurred_on,
          OLD.amount, OLD.currency_code, OLD.category_id, OLD.payment_method_id, OLD.source,
          OLD.merchant, OLD.note, OLD.adjustment_reason, OLD.created_at) THEN
     RAISE EXCEPTION 'posted financial transaction details are immutable';
@@ -191,6 +191,7 @@ CREATE TABLE public.transactions (
   user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
   idempotency_key uuid NOT NULL,
   transaction_kind public.transaction_kind NOT NULL,
+  occurred_at timestamptz NOT NULL,
   occurred_on date NOT NULL,
   amount numeric,
   currency_code text,
@@ -236,7 +237,7 @@ CREATE TABLE public.account_entries (
   account_id uuid NOT NULL,
   amount numeric NOT NULL CHECK (amount <> 0),
   currency_code text NOT NULL CHECK (currency_code ~ '^[A-Z]{3}$'),
-  posted_at timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
+  recorded_at timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   CONSTRAINT account_entries_user_id_id_key UNIQUE (user_id, id),
   CONSTRAINT account_entries_one_entry_per_account UNIQUE (user_id, transaction_id, account_id),
   CONSTRAINT account_entries_currency_scale CHECK (private.amount_uses_currency_scale(amount, currency_code)),
@@ -252,10 +253,11 @@ CREATE INDEX payment_methods_linked_account_idx ON public.payment_methods(user_i
 CREATE INDEX categories_owner_kind_archived_idx ON public.categories(user_id, kind, archived_at);
 CREATE INDEX categories_parent_idx ON public.categories(user_id, parent_id) WHERE parent_id IS NOT NULL;
 CREATE INDEX transactions_owner_date_idx ON public.transactions(user_id, occurred_on DESC);
+CREATE INDEX transactions_owner_effective_idx ON public.transactions(user_id, occurred_at DESC);
 CREATE INDEX transactions_category_date_idx ON public.transactions(user_id, category_id, occurred_on DESC) WHERE category_id IS NOT NULL;
 CREATE INDEX transactions_payment_method_date_idx ON public.transactions(user_id, payment_method_id, occurred_on DESC) WHERE payment_method_id IS NOT NULL;
 CREATE INDEX transactions_owner_status_date_idx ON public.transactions(user_id, status, occurred_on DESC);
-CREATE INDEX account_entries_account_posted_idx ON public.account_entries(user_id, account_id, posted_at DESC);
+CREATE INDEX account_entries_account_recorded_idx ON public.account_entries(user_id, account_id, recorded_at DESC);
 
 CREATE TRIGGER user_preferences_touch_updated_at
 BEFORE UPDATE ON public.user_preferences
