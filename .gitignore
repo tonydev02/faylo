@@ -24,3 +24,7 @@ pnpm-debug.log*
 .idea
 .vscode/*
 !.vscode/extensions.json
+
+# Local agent skill installation artifacts
+/.agents/
+/skills-lock.json
