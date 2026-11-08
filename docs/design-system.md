@@ -31,7 +31,15 @@
 
 ## Taste skill
 
-Before next user-facing frontend work, OMP should attempt to discover/load the installed Taste skill and follow its instructions. If the skill isn't installed or discoverable in its environment, explicitly report the blocker; do not pretend it was used. Lack of skill is not a reason to silently misrepresent compliance.
+Taste Skill is the public [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) project. Its README documents this installation command from the development workspace:
+
+```bash
+npx skills add https://github.com/Leonxlnx/taste-skill --skill "design-taste-frontend"
+```
+
+Install it for the agent actually running OMP (OpenCode, if offered by the installer), then restart/refresh the agent session and verify it can read the installed skill instructions. The installer may need Node 22+ and Chrome/Chromium for its checks. Don't blindly execute scripts or introduce heavy shader/landing-page effects into a personal finance dashboard; the user-approved app UX and performance constraints have priority.
+
+If skill installation or discovery fails in the OMP environment, explicitly report the blocker; do not pretend it was used.
 
 ## Example acceptance check
 
