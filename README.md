@@ -31,4 +31,4 @@ No environment variables are needed for the foundation preview. `.env.example` c
 
 Work only within the assigned GitHub issue. Create a dedicated feature branch, submit a scoped pull request that references the issue, and do not merge without owner approval. Treat the product requirements and data model as authoritative; ask the product owner before changing financial semantics or making deferred product decisions.
 
-The approved visual identity is dark forest `#0B211B`, forest `#174A39`, mint `#80C7A2`, and off-white `#EFF8F0`. The Taste design skill was not available in the implementation environment; disclose this when reporting frontend work rather than claiming it was used.
+The approved visual identity is black-first: near-black canvas and chrome, neutral charcoal surfaces, off-white text, and restrained Forest/Accent highlights. See the [design system](docs/design-system.md); it is authoritative for visual direction.

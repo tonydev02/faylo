@@ -80,7 +80,7 @@ const navigationItems: { label: string; icon: IconName; active?: boolean }[] = [
 function Brand() {
   return (
     <Link aria-label="Faylo overview" className="inline-flex items-center gap-3" href="/">
-      <span className="flex size-10 items-center justify-center rounded-2xl border border-mint/20 bg-forest text-mint shadow-[0_8px_28px_rgba(0,0,0,0.18)]">
+      <span className="flex size-10 items-center justify-center rounded-2xl bg-forest text-mint">
         <Icon className="size-6" name="mark" />
       </span>
       <span className="text-[21px] font-semibold tracking-[-0.055em] text-ink">faylo</span>
@@ -126,11 +126,11 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-canvas text-ink">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col border-r border-border/70 bg-canvas/95 px-5 pb-5 pt-7 backdrop-blur-xl lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col border-r border-border bg-chrome px-5 pb-5 pt-7 lg:flex">
         <Brand />
         <div className="mt-11 flex items-center justify-between px-3">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-soft">Workspace</span>
-          <span className="rounded-full border border-mint/20 bg-mint/10 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-mint">Preview</span>
+          <span className="text-[12px] font-medium text-muted">Workspace</span>
+          <span className="rounded-full border border-border bg-raised px-2.5 py-1 text-[11px] font-medium text-muted">Preview</span>
         </div>
         <div className="mt-4">
           <Navigation />
@@ -141,29 +141,29 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span>Settings</span>
             <span className="nav-soon">Soon</span>
           </button>
-          <div className="rounded-2xl border border-border/70 bg-surface/75 p-4">
-            <div className="flex items-center gap-2 text-[11px] font-medium text-muted">
-              <span className="size-1.5 rounded-full bg-mint/80" />
+          <div className="rounded-2xl border border-border bg-surface p-4">
+            <div className="flex items-center gap-2 text-[12px] font-medium text-muted">
+              <span className="size-1.5 rounded-full bg-muted/70" />
               Local foundation
             </div>
-            <p className="mt-2 text-xs leading-5 text-soft">Authentication and account storage are not connected.</p>
+            <p className="mt-2 text-[12px] leading-5 text-muted">Authentication and account storage are not connected.</p>
           </div>
-          <p className="px-1 text-[10px] tracking-wide text-soft/80">Faylo · A calmer way to see your money</p>
+          <p className="px-1 text-[12px] text-muted">Faylo · A calmer way to see your money</p>
         </div>
       </aside>
 
       <div className="lg:pl-[264px]">
-        <header className="sticky top-0 z-20 border-b border-border/60 bg-canvas/90 backdrop-blur-xl">
+        <header className="sticky top-0 z-20 border-b border-border bg-chrome">
           <div className="mx-auto flex h-[72px] max-w-[1440px] items-center justify-between px-5 sm:px-8 lg:px-10">
             <div className="lg:hidden">
               <Brand />
             </div>
             <p className="hidden text-[13px] text-muted lg:block">
-              Your space <span className="mx-2 text-soft/70">/</span> <span className="text-ink/85">Overview</span>
+              Your space <span className="mx-2 text-muted/70">/</span> <span className="text-ink/85">Overview</span>
             </p>
             <div className="flex items-center gap-3">
-              <span className="hidden items-center gap-2 rounded-full border border-border bg-surface/70 px-3 py-1.5 text-[11px] font-medium text-muted sm:inline-flex">
-                <span className="size-1.5 rounded-full bg-mint" />
+              <span className="hidden items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] font-medium text-muted sm:inline-flex">
+                <span className="size-1.5 rounded-full bg-muted/70" />
                 Foundation preview
               </span>
               <span aria-label="No account connected" className="flex size-9 items-center justify-center rounded-full border border-border bg-surface text-muted">
@@ -178,7 +178,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </main>
       </div>
 
-      <div className="mobile-nav-shell fixed inset-x-0 bottom-0 z-30 border-t border-border/80 bg-canvas/95 px-3 pt-2 backdrop-blur-xl lg:hidden">
+      <div className="mobile-nav-shell fixed inset-x-0 bottom-0 z-30 border-t border-border bg-chrome px-3 pt-2 lg:hidden">
         <Navigation mobile />
       </div>
     </div>

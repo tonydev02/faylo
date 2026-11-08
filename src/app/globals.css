@@ -1,20 +1,21 @@
 @import "tailwindcss";
 
 @theme inline {
-  --color-canvas: #0b211b;
-  --color-surface: #102a23;
+  --color-canvas: #0b0b0c;
+  --color-chrome: #0f0f10;
+  --color-surface: #171717;
+  --color-raised: #202020;
   --color-forest: #174a39;
   --color-mint: #80c7a2;
-  --color-ink: #eff8f0;
-  --color-muted: #a4b8aa;
-  --color-soft: #789084;
-  --color-border: #254438;
+  --color-ink: #f1f3f2;
+  --color-muted: #a3aaa6;
+  --color-border: #292929;
   --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 :root {
   color-scheme: dark;
-  background: #0b211b;
+  background: #0b0b0c;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -33,10 +34,8 @@ html {
 body {
   min-height: 100vh;
   margin: 0;
-  background:
-    radial-gradient(ellipse at 75% 0%, rgb(23 74 57 / 11%), transparent 38rem),
-    #0b211b;
-  color: #eff8f0;
+  background: #0b0b0c;
+  color: #f1f3f2;
 }
 
 button,
@@ -56,7 +55,7 @@ button:disabled {
 
 ::selection {
   background: rgb(128 199 162 / 28%);
-  color: #eff8f0;
+  color: #f1f3f2;
 }
 
 .nav-item {
@@ -67,16 +66,16 @@ button:disabled {
   border: 1px solid transparent;
   border-radius: 14px;
   padding: 0 13px;
-  color: #a4b8aa;
+  color: #a3aaa6;
   font-size: 13px;
   text-align: left;
   transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease;
 }
 
 .nav-item-active {
-  border-color: rgb(128 199 162 / 13%);
-  background: rgb(23 74 57 / 45%);
-  color: #eff8f0;
+  border-color: #174a39;
+  background: #174a39;
+  color: #f1f3f2;
 }
 
 .nav-item-active svg {
@@ -86,8 +85,7 @@ button:disabled {
 .nav-item-disabled {
   width: 100%;
   background: transparent;
-  color: #789084;
-  opacity: 0.82;
+  color: #a3aaa6;
 }
 
 .nav-item-mobile {
@@ -97,16 +95,16 @@ button:disabled {
   gap: 4px;
   border-radius: 12px;
   padding: 4px 2px;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .nav-soon {
   margin-left: auto;
   border-radius: 999px;
-  background: rgb(120 144 132 / 11%);
+  background: #202020;
   padding: 3px 7px;
-  color: #789084;
-  font-size: 9px;
+  color: #a3aaa6;
+  font-size: 11px;
 }
 
 .mobile-nav-shell {

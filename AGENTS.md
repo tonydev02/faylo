@@ -1,6 +1,6 @@
 # Repository guidance
 
-- `docs/requirements.md` and `docs/data-model.md` are authoritative. Do not infer or silently change financial behavior.
+- Product behavior is defined by `docs/requirements.md` and `docs/data-model.md`; visual identity is defined by `docs/design-system.md`.
 - Work only within the scope of the assigned GitHub issue. Use a dedicated feature branch and a scoped pull request; do not merge without owner approval.
 - Ask the product owner before changing any financial semantics or making a deferred product decision.
 - Never commit credentials, secrets, or real personal financial data. Keep environment files local; `.env.example` may contain placeholders only.
