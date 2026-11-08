@@ -1,9 +1,34 @@
 # Faylo
 
-Faylo is a private, mobile-first personal finance tracker and future financial companion.
+Faylo is a mobile-first personal finance workspace. Product behavior is defined by [Requirements v0.2](docs/requirements.md) and [Data model v0.2](docs/data-model.md).
 
-**Product specs:** [Requirements v0.2](docs/requirements.md) · [Data model v0.2](docs/data-model.md)
+## Local setup
 
-**Design:** dark forest green (#0B211B), forest (#174A39), mint (#80C7A2), off-white (#EFF8F0). Frontend implementation must use the available Taste skill.
+Requirements: Node.js 24 and npm 11 or later. The repository includes an `.nvmrc` for Node 24.
 
-**Process:** work from GitHub issues; submit scoped pull requests; do not merge without owner approval. Never commit credentials or real financial data.
+```bash
+npm ci
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). The current app is a foundation preview; authentication, account storage, and financial actions are not connected.
+
+## Checks
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+```
+
+GitHub Actions runs the same checks for pull requests and pushes to `main`.
+
+## Configuration
+
+No environment variables are needed for the foundation preview. `.env.example` contains placeholders for future integration only; never commit local environment files, credentials, or real financial data.
+
+## Contribution workflow
+
+Work only within the assigned GitHub issue. Create a dedicated feature branch, submit a scoped pull request that references the issue, and do not merge without owner approval. Treat the product requirements and data model as authoritative; ask the product owner before changing financial semantics or making deferred product decisions.
+
+The approved visual identity is black-first: near-black canvas and chrome, neutral charcoal surfaces, off-white text, and restrained Forest/Accent highlights. See the [design system](docs/design-system.md); it is authoritative for visual direction.
