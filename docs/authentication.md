@@ -93,10 +93,10 @@ Faylo's proxy refreshes Supabase cookies, but the private page and API also veri
 ## Architecture and scope
 
 - `src/proxy.ts` uses Supabase's current App Router SSR pattern to refresh cookie sessions with `auth.getClaims()` and preserve refreshed cookies/cache headers.
-- The root dashboard calls `requireOwner()` before rendering. `GET /api/auth/session` uses the same owner verification and returns no user data.
+- The root dashboard, account pages, and account Server Actions call `requireOwner()` before reading or writing account data. `GET /api/auth/session` uses the same owner verification and returns no user data.
 - `src/app/auth/callback/route.ts` exchanges the OAuth PKCE code, obtains the verified Supabase user with `auth.getUser()`, enforces the configured UUID, and clears rejected sessions.
 - Google email and browser-provided identity values are not authorization inputs. No Supabase service-role key is used.
-- Missing, expired, invalid, unapproved, and unavailable sessions fail closed. The private app and endpoint return no financial data; financial tables, balances, and transactions are outside Issue #2.
+- Missing, expired, invalid, unapproved, and unavailable sessions fail closed. Account onboarding and account balance projections use the verified owner's RLS-protected session; transaction entry and reporting UI remain outside Issue #4.
 
 ## Owner setup still required
 

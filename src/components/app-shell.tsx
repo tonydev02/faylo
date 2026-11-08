@@ -71,10 +71,12 @@ export function Icon({ name, className = "" }: { name: IconName; className?: str
   );
 }
 
-const navigationItems: { label: string; icon: IconName; active?: boolean }[] = [
-  { label: "Overview", icon: "overview", active: true },
+type AppSection = "overview" | "accounts";
+
+const navigationItems: { label: string; icon: IconName; href?: string; section?: AppSection }[] = [
+  { label: "Overview", icon: "overview", href: "/", section: "overview" },
   { label: "Activity", icon: "activity" },
-  { label: "Accounts", icon: "accounts" },
+  { label: "Accounts", icon: "accounts", href: "/accounts", section: "accounts" },
   { label: "Insights", icon: "insights" },
 ];
 
@@ -89,42 +91,51 @@ function Brand() {
   );
 }
 
-function Navigation({ mobile = false }: { mobile?: boolean }) {
+function Navigation({ mobile = false, activeSection }: { mobile?: boolean; activeSection: AppSection }) {
   return (
     <nav aria-label={mobile ? "Mobile primary navigation" : "Primary navigation"}>
       <ul className={mobile ? "grid grid-cols-4 gap-1" : "space-y-1.5"}>
-        {navigationItems.map((item) => (
-          <li key={item.label}>
-            {item.active ? (
-              <Link
-                aria-current="page"
-                className={mobile ? "nav-item nav-item-mobile nav-item-active" : "nav-item nav-item-active"}
-                href="/#overview"
-              >
-                <Icon className="size-[19px] shrink-0" name={item.icon} />
-                <span>{item.label}</span>
-              </Link>
-            ) : (
-              <button
-                aria-label={`${item.label}, coming soon`}
-                className={mobile ? "nav-item nav-item-mobile nav-item-disabled" : "nav-item nav-item-disabled"}
-                disabled
-                title="Coming soon"
-                type="button"
-              >
-                <Icon className="size-[19px] shrink-0" name={item.icon} />
-                <span>{item.label}</span>
-                {!mobile && <span className="nav-soon">Soon</span>}
-              </button>
-            )}
-          </li>
-        ))}
+        {navigationItems.map((item) => {
+          const active = item.section === activeSection;
+          const className = `${mobile ? "nav-item nav-item-mobile" : "nav-item"}${active ? " nav-item-active" : ""}`;
+
+          return (
+            <li key={item.label}>
+              {item.href ? (
+                <Link aria-current={active ? "page" : undefined} className={className} href={item.href}>
+                  <Icon className="size-[19px] shrink-0" name={item.icon} />
+                  <span>{item.label}</span>
+                </Link>
+              ) : (
+                <button
+                  aria-label={`${item.label}, coming soon`}
+                  className={`${mobile ? "nav-item nav-item-mobile" : "nav-item"} nav-item-disabled`}
+                  disabled
+                  title="Coming soon"
+                  type="button"
+                >
+                  <Icon className="size-[19px] shrink-0" name={item.icon} />
+                  <span>{item.label}</span>
+                  {!mobile && <span className="nav-soon">Soon</span>}
+                </button>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </nav>
   );
 }
 
-export function AppShell({ children, email }: { children: ReactNode; email: string | null }) {
+export function AppShell({
+  children,
+  email,
+  activeSection = "overview",
+}: {
+  children: ReactNode;
+  email: string | null;
+  activeSection?: AppSection;
+}) {
   return (
     <div className="min-h-screen bg-canvas text-ink">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col border-r border-border bg-chrome px-5 pb-5 pt-7 lg:flex">
@@ -134,7 +145,7 @@ export function AppShell({ children, email }: { children: ReactNode; email: stri
           <span className="rounded-full border border-border bg-raised px-2.5 py-1 text-[11px] font-medium text-muted">Private</span>
         </div>
         <div className="mt-4">
-          <Navigation />
+          <Navigation activeSection={activeSection} />
         </div>
         <div className="mt-auto space-y-5">
           <button className="nav-item nav-item-disabled w-full" disabled title="Coming soon" type="button">
@@ -160,7 +171,7 @@ export function AppShell({ children, email }: { children: ReactNode; email: stri
               <Brand />
             </div>
             <p className="hidden text-[13px] text-muted lg:block">
-              Your space <span className="mx-2 text-muted/70">/</span> <span className="text-ink/85">Overview</span>
+              Your space <span className="mx-2 text-muted/70">/</span> <span className="text-ink/85">{activeSection === "accounts" ? "Accounts" : "Overview"}</span>
             </p>
             <div className="flex items-center gap-2 sm:gap-3">
               <span className="hidden max-w-[260px] truncate text-[12px] text-muted sm:inline" title={email ?? undefined}>
@@ -181,7 +192,7 @@ export function AppShell({ children, email }: { children: ReactNode; email: stri
       </div>
 
       <div className="mobile-nav-shell fixed inset-x-0 bottom-0 z-30 border-t border-border bg-chrome px-3 pt-2 lg:hidden">
-        <Navigation mobile />
+        <Navigation activeSection={activeSection} mobile />
       </div>
     </div>
   );

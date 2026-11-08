@@ -29,7 +29,7 @@
 - `type`: `bank` | `cash` | `investment`
 - `currency_code` (e.g. JPY/VND/USD)
 - `opening_balance_minor` (or exact decimal in native units)
-- `opening_as_of` timestamp/date (the baseline from which transactions are tracked)
+- `opening_as_of` date (the baseline from which transactions are tracked; no time-of-day)
 - `include_in_assets` boolean default true
 - `status`: `active` | `archived`
 - `created_at`, `updated_at`

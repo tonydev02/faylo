@@ -29,6 +29,29 @@ VALUES
   ('a1111111-1111-4111-8111-111111111111', 'VND Cash', 'cash', 'VND', 250000, '2026-01-01'),
   ('a1111111-1111-4111-8111-111111111111', 'Late Account', 'bank', 'JPY', 10000, '2026-06-01'),
   ('a1111111-1111-4111-8111-111111111111', 'Investment', 'investment', 'JPY', 500000, '2026-01-01');
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.accounts
+   WHERE user_id = auth.uid() AND name = 'Checking' AND account_kind = 'bank'
+     AND currency_code = 'JPY' AND opening_balance::text = '100000'
+     AND opening_as_of = '2026-01-01' AND include_in_assets),
+  1,
+  'account creation persists its owner, immutable opening snapshot, and tracked-assets preference'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.transactions WHERE transaction_kind IN ('income', 'expense')),
+  0,
+  'creating opening snapshots does not create income or expense transactions'
+);
+SELECT extensions.is(
+  (SELECT opening_balance FROM public.account_balances_as_of('2026-01-01 00:00:00+09'::timestamptz) WHERE name = 'USD Account'),
+  '9007199254740993.45',
+  'owner balance projection returns large PostgreSQL NUMERIC opening amounts as exact decimal text'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.account_balances_as_of('2026-01-01 00:00:00+09'::timestamptz)),
+  6,
+  'approved owner can read all account balance projections'
+);
 INSERT INTO public.payment_methods (user_id, name, method_kind, linked_account_id)
 VALUES
   ('a1111111-1111-4111-8111-111111111111', 'Debit', 'debit_card', (SELECT id FROM public.accounts WHERE name = 'Checking')),
@@ -84,7 +107,12 @@ UPDATE public.user_preferences SET base_currency = 'JPY'
 WHERE user_id = 'a1111111-1111-4111-8111-111111111111';
 INSERT INTO public.accounts (user_id, name, account_kind, currency_code, opening_balance, opening_as_of)
 VALUES ('a1111111-1111-4111-8111-111111111111', 'Temporary Account', 'cash', 'JPY', 0, '2026-01-01');
-UPDATE public.accounts SET name = 'Temporary Account Renamed' WHERE name = 'Temporary Account';
+UPDATE public.accounts SET name = 'Temporary Account Renamed', include_in_assets = false WHERE name = 'Temporary Account';
+SELECT extensions.is(
+  (SELECT name || ':' || include_in_assets::text FROM public.accounts WHERE name = 'Temporary Account Renamed'),
+  'Temporary Account Renamed:false',
+  'active account can be renamed and excluded from tracked assets without changing its opening snapshot'
+);
 DELETE FROM public.accounts WHERE name = 'Temporary Account Renamed';
 INSERT INTO public.payment_methods (user_id, name, method_kind)
 VALUES ('a1111111-1111-4111-8111-111111111111', 'Temporary Method', 'other');
@@ -148,6 +176,11 @@ SELECT extensions.lives_ok(
     jsonb_build_array(jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Late Account'), 'amount', '-100', 'currency_code', 'JPY'))
   )$$,
   'the opening date itself is included in the account tracking period'
+);
+SELECT extensions.is(
+  (SELECT balance FROM public.account_balances_as_of('2026-06-01 00:00:00+09'::timestamptz) WHERE name = 'Late Account'),
+  '9900',
+  'as-of projection includes entries on the opening date itself'
 );
 SELECT extensions.is(
   (SELECT account.opening_balance + COALESCE(pg_catalog.sum(entry.amount) FILTER (WHERE transaction_row.status = 'posted'), 0)
@@ -426,6 +459,11 @@ SELECT extensions.is(
   '1.23',
   'USD transaction amount is exact'
 );
+SELECT extensions.is(
+  (SELECT balance FROM public.account_balances_as_of('2026-01-15 00:00:00+09'::timestamptz) WHERE name = 'USD Account'),
+  '9007199254740992.22',
+  'balance projection adds posted native-currency entries exactly without JavaScript-number precision loss'
+);
 SELECT extensions.lives_ok(
   $$SELECT public.post_transaction(
     'c0000000-0000-4000-8000-000000000007', 'expense', '2026-01-15', '1000', 'VND',
@@ -639,6 +677,11 @@ SELECT extensions.is(
   'future-effective account entry is excluded from a current as-of balance'
 );
 SELECT extensions.is(
+  (SELECT balance FROM public.account_balances_as_of('2026-01-21 23:59:59+09'::timestamptz) WHERE name = 'Checking'),
+  '58800',
+  'as-of projection excludes voided and future-effective entries'
+);
+SELECT extensions.is(
   (SELECT account.opening_balance + COALESCE(pg_catalog.sum(entry.amount) FILTER (
      WHERE transaction_row.status = 'posted'
        AND transaction_row.occurred_at <= '2999-01-02 00:00:00+09'::timestamptz
@@ -654,6 +697,11 @@ SELECT extensions.is(
   'future-effective account entry is included once its effective instant is reached'
 );
 UPDATE public.accounts SET status = 'archived' WHERE name = 'Late Account';
+SELECT extensions.is(
+  (SELECT status FROM public.account_balances_as_of('2026-06-02 23:59:59+09'::timestamptz) WHERE name = 'Late Account'),
+  'archived',
+  'archived account remains available as a read-only balance record'
+);
 SELECT extensions.throws_ok(
   $$SELECT public.post_transaction(
     'c0000000-0000-4000-8000-000000000037', 'expense', '2026-06-02', '1', 'JPY',
@@ -692,6 +740,10 @@ SELECT extensions.throws_ok(
   $$SELECT public.post_transaction('c0000000-0000-4000-8000-000000000030', 'expense', '2026-01-02', '1', 'JPY')$$,
   '42501', NULL, 'anonymous callers cannot execute the posting RPC'
 );
+SELECT extensions.throws_ok(
+  $$SELECT * FROM public.account_balances_as_of()$$,
+  '42501', NULL, 'anonymous callers cannot execute the account balance projection'
+);
 
 RESET ROLE;
 SET LOCAL ROLE authenticated;
@@ -719,6 +771,10 @@ SELECT extensions.throws_ok(
 SELECT extensions.throws_ok(
   $$SELECT public.post_transaction('c0000000-0000-4000-8000-000000000031', 'expense', '2026-01-02', '1', 'JPY')$$,
   '42501', NULL, 'authenticated non-owner cannot post an unauthorized Faylo transaction'
+);
+SELECT extensions.throws_ok(
+  $$SELECT * FROM public.account_balances_as_of()$$,
+  '42501', NULL, 'authenticated non-owner cannot execute the account balance projection'
 );
 SELECT extensions.throws_ok(
   $$SELECT * FROM private.owner_allowlist$$,
