@@ -80,7 +80,7 @@ npm run test:db         # supabase test db; runs supabase/tests/*.sql
 supabase stop --no-backup
 ```
 
-`supabase db reset` rebuilds the local database from the versioned migrations and is the clean-database migration check. Do not add `--linked` to local reset commands. `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` cover the application checks. GitHub Actions runs a separate local Supabase/PostgreSQL integration job on pull requests.
+`supabase db reset` rebuilds the local database from the versioned migrations and is the clean-database migration check. Do not add `--linked` to local reset commands. `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` cover the application checks. GitHub Actions runs a separate local Supabase/PostgreSQL integration job on pull requests. The local SMTP/Mailpit service is disabled in `supabase/config.toml` because the current Google-only authentication flow does not use email; enable it if email-flow tests are added.
 
 The pgTAP suite uses only synthetic Auth identities and financial values inside a rolled-back transaction. It covers RLS for owner, non-owner, and anonymous roles; cross-owner FKs; exact JPY/VND/USD values; opening dates; category/payment semantics; cash/debit and credit-card posting; settlements; same- and cross-currency transfers; atomic rollback; retry conflicts; adjustments; voiding; and the direct-write boundary.
 
