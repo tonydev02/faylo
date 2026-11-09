@@ -208,11 +208,26 @@ export async function deleteUnusedAccount(
       .delete()
       .eq("user_id", ownerId)
       .eq("id", accountId)
+      .eq("name", confirmationName)
       .select("id")
       .maybeSingle();
 
     if (error) return { ok: false, kind: error.code === "23503" ? "blocked" : "unavailable" };
-    if (!data) return { ok: false, kind: "not-found" };
+    if (!data) {
+      const { data: currentAccount, error: currentAccountError } = await supabase
+        .from("accounts")
+        .select("id, name")
+        .eq("user_id", ownerId)
+        .eq("id", accountId)
+        .maybeSingle();
+
+      if (currentAccountError) return { ok: false, kind: "unavailable" };
+      if (!currentAccount) return { ok: false, kind: "not-found" };
+      if (!accountNameMatchesConfirmation(currentAccount.name, confirmationName)) {
+        return { ok: false, kind: "confirmation-required" };
+      }
+      return { ok: false, kind: "not-found" };
+    }
     return { ok: true, value: data.id };
   } catch {
     return { ok: false, kind: "unavailable" };
