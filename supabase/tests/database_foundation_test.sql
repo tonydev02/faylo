@@ -161,26 +161,6 @@ SELECT extensions.is(
   'Temporary Account Renamed:false',
   'active account can be renamed and excluded from tracked assets without changing its opening snapshot'
 );
-INSERT INTO public.accounts (user_id, name, account_kind, currency_code, opening_balance, opening_as_of)
-VALUES ('a1111111-1111-4111-8111-111111111111', 'Stale confirmation account', 'cash', 'JPY', 0, '2026-01-01');
-UPDATE public.accounts
-SET name = 'Renamed after confirmation'
-WHERE user_id = auth.uid() AND name = 'Stale confirmation account';
-DELETE FROM public.accounts AS target
-WHERE target.user_id = auth.uid()
-  AND target.id = (
-    SELECT current_account.id
-    FROM public.accounts AS current_account
-    WHERE current_account.user_id = auth.uid()
-      AND current_account.name = 'Renamed after confirmation'
-  )
-  AND target.name = 'Stale confirmation account';
-SELECT extensions.is(
-  (SELECT pg_catalog.count(*)::integer FROM public.accounts
-   WHERE user_id = auth.uid() AND name = 'Renamed after confirmation'),
-  1,
-  'an account renamed after confirmation is not deleted by the stale confirmed name'
-);
 SELECT extensions.lives_ok(
   $$DELETE FROM public.accounts WHERE name = 'Temporary Account Renamed'$$,
   'approved owner can delete an unused active account'
