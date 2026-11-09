@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { formatEffectiveBalance } from "../src/lib/accounts/presentation.ts";
 import { formatMoney, supportedCurrencies } from "../src/lib/accounts/money.ts";
 import {
   validateAccountInput,
@@ -64,6 +65,11 @@ test("very large exact amounts remain valid up to PostgreSQL numeric limits", ()
   assert.equal(formatMoney("9007199254740993", "JPY"), "¥9,007,199,254,740,993");
   assert.equal(formatMoney("9007199254740993", "VND"), "₫9,007,199,254,740,993");
   assert.equal(formatMoney("-9007199254740993.45", "USD"), "−$9,007,199,254,740,993.45");
+});
+
+test("future opening balances show an unavailable state until effective", () => {
+  assert.equal(formatEffectiveBalance(null, "USD"), "Not yet effective");
+  assert.equal(formatEffectiveBalance("9007199254740993.45", "USD"), "$9,007,199,254,740,993.45");
 });
 
 test("date validation rejects timestamps and impossible calendar dates", () => {

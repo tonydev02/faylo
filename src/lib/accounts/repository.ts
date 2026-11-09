@@ -12,7 +12,7 @@ export type TrackedAccount = {
   openingAsOf: string;
   includeInAssets: boolean;
   status: "active" | "archived";
-  balance: string;
+  balance: string | null;
   asOf: string;
 };
 
@@ -27,7 +27,7 @@ type RawAccount = {
   opening_as_of: string;
   include_in_assets: boolean;
   status: "active" | "archived";
-  balance: string;
+  balance: string | null;
   as_of: string;
 };
 
@@ -49,7 +49,7 @@ function isRawAccount(value: unknown): value is RawAccount {
     && typeof row.include_in_assets === "boolean"
     && typeof row.status === "string"
     && Object.hasOwn(ACCOUNT_STATUSES, row.status)
-    && typeof row.balance === "string"
+    && (row.balance === null || typeof row.balance === "string")
     && typeof row.as_of === "string";
 }
 

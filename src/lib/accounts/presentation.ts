@@ -1,3 +1,9 @@
+import { formatMoney } from "./money.ts";
+
+export function formatEffectiveBalance(value: string | null, currencyCode: string): string {
+  return value === null ? "Not yet effective" : formatMoney(value, currencyCode);
+}
+
 export function formatOpeningDate(value: string): string {
   return new Intl.DateTimeFormat("en-US", {
     day: "numeric",

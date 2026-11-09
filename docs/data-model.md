@@ -42,7 +42,9 @@
 - `currency_code` matching the account
 - `recorded_at` server timestamp for persistence; use the parent transaction's `occurred_at` for economic ordering
 
-**Balance formula, bank/cash:** At an as-of instant, `opening_balance + SUM(account_entries)` for posted transactions with `occurred_on >= opening_as_of` and `occurred_at <= as_of`.
+**Balance boundary, all account types:** Before midnight at the start of `opening_as_of` in the user's configured timezone, the balance is unavailable; on and after that local instant, the opening snapshot becomes effective.
+
+**Balance formula, bank/cash:** At an as-of instant on or after the opening boundary, `opening_balance + SUM(account_entries)` for posted transactions with `occurred_on >= opening_as_of` and `occurred_at <= as_of`.
 
 **Balance formula, investment:** Latest manual valuation snapshot at or before `as_of` (or opening balance) + account entries whose parent transaction occurred after that snapshot and no later than `as_of`. The cutoff is strict (`occurred_at > valued_at`); an entry at the exact snapshot instant is treated as already reflected in the absolute snapshot.
 

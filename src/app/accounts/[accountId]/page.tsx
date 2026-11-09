@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { AccountSettingsForm, ArchiveAccountForm } from "@/components/accounts/account-settings-form";
-import { formatBalanceAsOf, formatOpeningDate } from "@/lib/accounts/presentation";
+import { formatBalanceAsOf, formatEffectiveBalance, formatOpeningDate } from "@/lib/accounts/presentation";
 import { getAccount } from "@/lib/accounts/repository";
 import { formatMoney } from "@/lib/accounts/money";
 import { requireOwner } from "@/lib/auth/server";
@@ -57,9 +57,13 @@ export default async function AccountDetailPage({
                 <div>
                   <p className="text-[13px] font-medium text-muted">Native-currency balance</p>
                   <h2 className="mt-3 break-all text-[32px] font-medium leading-tight tracking-[-0.055em] text-ink tabular-nums sm:text-[44px]" id="current-balance-title">
-                    {formatMoney(result.value.balance, result.value.currencyCode)}
+                    {formatEffectiveBalance(result.value.balance, result.value.currencyCode)}
                   </h2>
-                  <p className="mt-3 text-[13px] text-muted">Balance as of {formatBalanceAsOf(result.value.asOf)}</p>
+                  <p className="mt-3 text-[13px] text-muted">
+                    {result.value.balance === null
+                      ? `Tracking begins on ${formatOpeningDate(result.value.openingAsOf)}`
+                      : `Balance as of ${formatBalanceAsOf(result.value.asOf)}`}
+                  </p>
                 </div>
                 <p className={result.value.includeInAssets ? "w-fit rounded-full border border-forest/70 bg-forest/25 px-3 py-1.5 text-[12px] font-medium text-mint" : "w-fit rounded-full border border-border bg-raised px-3 py-1.5 text-[12px] font-medium text-muted"}>
                   {result.value.includeInAssets ? "Included in tracked assets" : "Excluded from tracked assets"}
@@ -78,10 +82,10 @@ export default async function AccountDetailPage({
                   </div>
                   <div className="flex items-start justify-between gap-4">
                     <dt className="text-muted">Tracking begins</dt>
-                    <dd className="text-right font-medium text-ink">On the opening date</dd>
+                    <dd className="text-right font-medium text-ink">At midnight in your timezone on the opening date</dd>
                   </div>
                 </dl>
-                <p className="mt-4 text-[13px] leading-5 text-muted">The opening snapshot is not a transaction and does not increase income or expenses.</p>
+                <p className="mt-4 text-[13px] leading-5 text-muted">The opening snapshot is the balance baseline from its effective date, not a transaction or income or expense.</p>
               </section>
 
               <section aria-labelledby="balance-method-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-6">
@@ -93,7 +97,7 @@ export default async function AccountDetailPage({
                   </div>
                   <div className="flex items-start justify-between gap-4">
                     <dt className="text-muted">Opening-date boundary</dt>
-                    <dd className="text-right font-medium text-ink">Inclusive · {formatOpeningDate(result.value.openingAsOf)}</dd>
+                    <dd className="text-right font-medium text-ink">Inclusive at local midnight · {formatOpeningDate(result.value.openingAsOf)}</dd>
                   </div>
                 </dl>
                 <p className="mt-4 text-[13px] leading-5 text-muted">Future-effective entries are excluded until their economic effective time.</p>
@@ -115,14 +119,14 @@ export default async function AccountDetailPage({
                 </section>
                 <section aria-labelledby="archive-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-6">
                   <h2 className="text-[17px] font-medium tracking-[-0.02em] text-ink" id="archive-title">Archive account</h2>
-                  <p className="mb-5 mt-2 text-[13px] leading-5 text-muted">Archiving preserves the account and its opening snapshot. Its current computed balance remains visible; the account becomes read-only and cannot receive new activity.</p>
+                  <p className="mb-5 mt-2 text-[13px] leading-5 text-muted">Archiving preserves the account and its opening snapshot. Its computed balance is available from its effective opening date; the account becomes read-only and cannot receive new activity.</p>
                   <ArchiveAccountForm accountId={result.value.id} accountName={result.value.name} />
                 </section>
               </div>
             ) : (
               <aside className="rounded-3xl border border-border bg-surface p-5 sm:p-6" role="note">
                 <h2 className="text-[16px] font-medium text-ink">Archived account · read-only</h2>
-                <p className="mt-2 text-[13px] leading-5 text-muted">This account’s balance and opening snapshot remain visible. Its name, tracking preference, and account status can no longer be changed here.</p>
+                <p className="mt-2 text-[13px] leading-5 text-muted">The stored opening snapshot remains visible; its computed balance becomes available from the effective opening date. Its name, tracking preference, and status cannot be changed here.</p>
               </aside>
             )}
           </>

@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
-import { formatBalanceAsOf, formatOpeningDate } from "@/lib/accounts/presentation";
+import { formatBalanceAsOf, formatEffectiveBalance, formatOpeningDate } from "@/lib/accounts/presentation";
 import { listAccounts, type TrackedAccount } from "@/lib/accounts/repository";
-import { formatMoney } from "@/lib/accounts/money";
 import { requireOwner } from "@/lib/auth/server";
 
 function AccountCard({ account }: { account: TrackedAccount }) {
@@ -23,10 +22,13 @@ function AccountCard({ account }: { account: TrackedAccount }) {
         </div>
 
         <p className="mt-7 break-all text-[26px] font-medium leading-tight tracking-[-0.045em] text-ink tabular-nums sm:text-[30px]">
-          {formatMoney(account.balance, account.currencyCode)}
+          {formatEffectiveBalance(account.balance, account.currencyCode)}
         </p>
-        <p className="mt-2 text-[13px] leading-5 text-muted">Balance as of {formatBalanceAsOf(account.asOf)}</p>
-
+        <p className="mt-2 text-[13px] leading-5 text-muted">
+          {account.balance === null
+            ? `Tracking begins on ${formatOpeningDate(account.openingAsOf)}`
+            : `Balance as of ${formatBalanceAsOf(account.asOf)}`}
+        </p>
         <div className="mt-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border pt-4 text-[13px]">
           <span className="text-muted">Opening snapshot · {formatOpeningDate(account.openingAsOf)}</span>
           <span className={account.includeInAssets ? "text-mint" : "text-muted"}>
@@ -104,7 +106,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
                   <h2 className="text-[18px] font-medium tracking-[-0.025em] text-ink" id="archived-accounts-title">Archived accounts</h2>
                   <span className="text-[13px] text-muted">{result.value.filter((account) => account.status === "archived").length}</span>
                 </div>
-                <p className="text-[13px] leading-5 text-muted">Archived accounts are read-only. Their computed balances remain visible.</p>
+                <p className="text-[13px] leading-5 text-muted">Archived accounts are read-only. Their computed balances become available from their effective opening dates.</p>
                 <AccountList accounts={result.value.filter((account) => account.status === "archived")} emptyDescription="" emptyTitle="" />
               </section>
             )}

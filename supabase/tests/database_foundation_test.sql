@@ -703,6 +703,22 @@ SELECT extensions.is(
   'archived account remains available as a read-only balance record'
 );
 SELECT extensions.throws_ok(
+  $$UPDATE public.accounts SET name = 'Late Account Renamed' WHERE name = 'Late Account'$$,
+  '23514', NULL, 'an archived account cannot be renamed through direct database updates'
+);
+SELECT extensions.throws_ok(
+  $$UPDATE public.accounts SET include_in_assets = false WHERE name = 'Late Account'$$,
+  '23514', NULL, 'an archived account tracked-assets preference cannot be changed directly'
+);
+SELECT extensions.throws_ok(
+  $$UPDATE public.accounts SET status = 'active' WHERE name = 'Late Account'$$,
+  '23514', NULL, 'an archived account cannot be reactivated through direct database updates'
+);
+SELECT extensions.throws_ok(
+  $$UPDATE public.accounts SET name = name WHERE name = 'Late Account'$$,
+  '23514', NULL, 'even a no-op direct update is rejected for an archived account'
+);
+SELECT extensions.throws_ok(
   $$SELECT public.post_transaction(
     'c0000000-0000-4000-8000-000000000037', 'expense', '2026-06-02', '1', 'JPY',
     (SELECT id FROM public.categories WHERE name = 'Food'), NULL,
@@ -720,6 +736,34 @@ SELECT extensions.throws_ok(
   '23503', NULL, 'posting rejects an archived payment method'
 );
 
+UPDATE public.user_preferences SET timezone = 'America/Los_Angeles' WHERE user_id = auth.uid();
+SELECT extensions.is(
+  (SELECT timezone FROM public.user_preferences WHERE user_id = auth.uid()),
+  'America/Los_Angeles',
+  'account opening dates use the configured user timezone'
+);
+INSERT INTO public.accounts (user_id, name, account_kind, currency_code, opening_balance, opening_as_of)
+VALUES ('a1111111-1111-4111-8111-111111111111', 'Future Opening', 'bank', 'USD', 9007199254740993.45, '2026-11-20');
+SELECT extensions.ok(
+  (SELECT balance IS NULL
+   FROM public.account_balances_as_of('2026-11-20 07:59:59.999999+00'::timestamptz)
+   WHERE name = 'Future Opening'),
+  'balance is unavailable immediately before midnight on the opening date in the configured timezone'
+);
+SELECT extensions.is(
+  (SELECT balance
+   FROM public.account_balances_as_of('2026-11-20 08:00:00+00'::timestamptz)
+   WHERE name = 'Future Opening'),
+  '9007199254740993.45',
+  'opening balance becomes effective exactly at local midnight without decimal precision loss'
+);
+SELECT extensions.is(
+  (SELECT balance
+   FROM public.account_balances_as_of('2026-11-20 08:00:00.000001+00'::timestamptz)
+   WHERE name = 'Future Opening'),
+  '9007199254740993.45',
+  'opening balance remains available after its local effective opening instant'
+);
 DELETE FROM public.user_preferences WHERE user_id = 'a1111111-1111-4111-8111-111111111111';
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.user_preferences WHERE user_id = auth.uid()),
