@@ -1,12 +1,13 @@
+import Link from "next/link";
 import { AppShell, Icon } from "@/components/app-shell";
 import { requireOwner } from "@/lib/auth/server";
 
 export const dynamic = "force-dynamic";
 
 const overviewCards = [
-  { label: "Tracked assets", detail: "Available after setup" },
-  { label: "Income", detail: "No data connected" },
-  { label: "Spending", detail: "No data connected" },
+  { label: "Tracked assets", detail: "Balances remain in each account currency" },
+  { label: "Income", detail: "Transaction entry is not available yet" },
+  { label: "Spending", detail: "Transaction entry is not available yet" },
 ];
 
 function MetricCard({ label, detail }: { label: string; detail: string }) {
@@ -50,7 +51,7 @@ export default async function HomePage() {
               A clearer view of your money.
             </h1>
             <p className="mt-4 max-w-xl text-[14px] leading-7 text-muted sm:text-[15px]">
-              Your real financial data is not connected. This workspace contains no sample balances or transactions.
+              Enter opening balances to begin tracking each account from its effective date. Faylo does not reconstruct earlier transactions.
             </p>
           </div>
           <span className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2 text-[12px] font-medium text-muted">
@@ -64,22 +65,19 @@ export default async function HomePage() {
             <div className="max-w-2xl">
               <div className="flex items-center gap-3">
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl border border-forest/60 bg-forest/25 text-mint">
-                  <Icon className="size-5" name="spark" />
+                  <Icon className="size-5" name="accounts" />
                 </span>
-                <p className="text-[12px] font-medium text-muted">A considered start</p>
+                <p className="text-[12px] font-medium text-muted">Account setup</p>
               </div>
-              <h2 id="setup-title" className="mt-5 text-[22px] font-medium tracking-[-0.04em] text-ink sm:text-[25px]">A clean slate, by design.</h2>
+              <h2 className="mt-5 text-[22px] font-medium tracking-[-0.04em] text-ink sm:text-[25px]" id="setup-title">Start with a verified balance.</h2>
               <p className="mt-2 max-w-xl text-[14px] leading-6 text-muted">
-                Your dashboard stays empty until setup is available. No sample balances or transactions are shown here.
+                Add a bank, cash, or investment account. Its opening balance is a starting snapshot, never income or an expense.
               </p>
             </div>
-            <div className="flex shrink-0 flex-col items-start gap-2 md:items-end">
-              <button className="inline-flex min-h-12 items-center gap-3 rounded-2xl border border-border bg-raised px-4 text-[13px] font-medium text-muted" disabled type="button">
-                Account setup
-                <Icon className="size-4 text-muted" name="arrow" />
-              </button>
-              <span className="pl-1 text-[12px] text-muted md:pr-1">Coming soon · no data is saved</span>
-            </div>
+            <Link className="inline-flex min-h-12 w-fit shrink-0 items-center gap-3 rounded-2xl bg-mint px-4 text-[14px] font-semibold text-canvas transition-colors hover:bg-[#a0d8b8]" href="/accounts/new">
+              Add an account
+              <Icon className="size-4" name="arrow" />
+            </Link>
           </div>
         </section>
 
@@ -101,7 +99,7 @@ export default async function HomePage() {
                 <Icon className="size-[18px]" name="activity" />
               </span>
               <h3 className="mt-3 text-[13px] font-medium text-ink/90">Your activity will appear here</h3>
-              <p className="mt-1.5 max-w-sm text-[12px] leading-5 text-muted">Transactions are not enabled in this foundation. Nothing has been entered or stored.</p>
+              <p className="mt-1.5 max-w-sm text-[12px] leading-5 text-muted">Transaction entry is not available yet. Account opening snapshots do not create activity.</p>
             </div>
           </section>
 
@@ -125,7 +123,7 @@ export default async function HomePage() {
 
         <footer className="flex flex-col gap-2 border-t border-border pt-5 text-[12px] text-muted sm:flex-row sm:items-center sm:justify-between">
           <span>Faylo private workspace</span>
-          <span>Financial storage and actions are not connected.</span>
+          <span>Account records are stored in Supabase; transaction tools are not available yet.</span>
         </footer>
       </div>
     </AppShell>

@@ -44,7 +44,9 @@ a {
 }
 
 button:focus-visible,
-a:focus-visible {
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
   outline: 2px solid #80c7a2;
   outline-offset: 3px;
 }
@@ -118,4 +120,73 @@ button:disabled {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.account-field-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #a3aaa6;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.account-field-control {
+  display: block;
+  min-height: 50px;
+  width: 100%;
+  border: 1px solid #393939;
+  border-radius: 12px;
+  background: #101011;
+  padding: 0 14px;
+  color: #f1f3f2;
+  font-size: 16px;
+}
+
+.account-field-control[aria-invalid="true"] {
+  border-color: #c26d6d;
+}
+
+.account-field-control:focus-visible {
+  border-color: #80c7a2;
+}
+
+.account-field-help {
+  margin-top: 7px;
+  color: #a3aaa6;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.account-field-error {
+  margin-top: 7px;
+  color: #f2a6a6;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.account-form-message {
+  border: 1px solid #633f3f;
+  border-radius: 14px;
+  background: #251919;
+  padding: 12px 14px;
+  color: #f2c5c5;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.account-success-message {
+  border: 1px solid #315c48;
+  border-radius: 14px;
+  background: #14231b;
+  padding: 12px 14px;
+  color: #b4e1c4;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.account-checkbox {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  accent-color: #80c7a2;
 }

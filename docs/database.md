@@ -36,7 +36,17 @@ The immutable scale helper uses 0 fraction digits for JPY/VND and other standard
 
 `post_transaction` accepts all amounts as decimal **strings** (`p_amount` text and entry JSON `amount` strings). JSON numeric values and exponent notation are rejected. Application code must pass strings through the Supabase client and must not parse, add, or multiply money using JavaScript `number`. Any later FX rate/provenance fields must also use exact `numeric`; FX conversion itself is not implemented here.
 
-The schema does not add a text-returning read API. Future consumers must expose `numeric` amounts as decimal strings before JavaScript parsing, or keep financial arithmetic in PostgreSQL; raw JSON numeric values are not an exact-money client contract.
+The table schema is not itself a precision-safe read contract. `public.account_balances_as_of(p_as_of)` returns opening amounts and computed balances as decimal text; all addition occurs in PostgreSQL. Never expose raw `numeric` as JSON numbers.
+
+## Account balance projection
+
+`public.account_balances_as_of(p_as_of)` is an authenticated, invoker-rights read function. It checks the approved owner and queries with that session’s RLS. It returns active and archived accounts, `opening_balance` as exact decimal text, and computed `balance` as nullable exact decimal text; callers do not provide a user ID. Its default as-of instant is the database statement time.
+
+On or after midnight at the start of `opening_as_of` in the user’s configured timezone, the balance is the immutable opening snapshot plus account entries whose parent transaction is currently `posted` (not voided), whose `occurred_on >= opening_as_of`, and whose economic `occurred_at <= p_as_of`. Before that instant, `balance` is `NULL`, not the opening snapshot. PostgreSQL performs the exact `numeric` sum. `recorded_at` is not used. Opening dates are date-only and inclusive; future-effective entries are excluded until their effective instant.
+
+Account onboarding inserts one account row only. It does not create a transaction or an income/expense event. The server uses the authenticated session and the existing owner-scoped RLS grants; active accounts can change only `name` and `include_in_assets`, or transition to archived. The account kind, currency, opening amount, and opening date remain immutable. The current schema permits signed opening balances; this issue adds no nonnegative restriction. Archived accounts remain readable but are immutable after the one-way archive transition, including to direct owner updates.
+
+The current schema has no investment valuation table. For this issue, an investment account balance is its opening snapshot plus eligible posted account entries; this is not a market valuation.
 
 ## Atomic posting, idempotency, and voiding
 
@@ -69,7 +79,7 @@ The database owner UUID and the server-side `SUPABASE_OWNER_USER_ID` must be the
    Confirm exactly one row is returned and that its UUID matches the server configuration. This placeholder is not an actual Faylo owner ID. The authenticated browser role cannot select or modify the allowlist. Owner changes are a privileged operational decision because the allowlisted identity can access the existing records.
 4. Confirm anonymous access and a second authenticated test account remain denied. Disable additional sign-ups as described in `docs/authentication.md` when appropriate.
 
-The browser needs only the Supabase publishable key and the authenticated user's session. Never put a `service_role`/secret key in browser code; it is unnecessary here and bypass-capable roles are outside this RLS boundary. The current app verifies the owner server-side; future financial data services must use the user's authenticated Supabase client so database RLS remains active.
+Account pages and Server Actions use the user's authenticated server-side Supabase session; the browser never accesses Supabase directly. Database RLS remains active for these requests. Never put a `service_role`/secret key in browser or normal server request paths; it is unnecessary here and bypass-capable roles are outside this RLS boundary.
 
 ## Migrations and tests
 
@@ -84,27 +94,27 @@ supabase stop --no-backup
 
 `supabase db reset` rebuilds the local database from the versioned migrations and is the clean-database migration check. Do not add `--linked` to local reset commands. `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` cover the application checks. GitHub Actions runs a separate local Supabase/PostgreSQL integration job on pull requests. The local SMTP/Mailpit service is disabled in `supabase/config.toml` because the current Google-only authentication flow does not use email; enable it if email-flow tests are added.
 
-The pgTAP suite uses only synthetic Auth identities and financial values inside a rolled-back transaction. It covers RLS for owner, non-owner, and anonymous roles; cross-owner FKs; exact JPY/VND/USD values; opening dates; effective-time/date-only conversion, same-day valuation ordering, future-effective as-of balances, retry conflicts, payment-method/account mismatch, archived accounts and methods, category/payment semantics; cash/debit and credit-card posting; settlements; same- and cross-currency transfers; atomic rollback; adjustments; voiding; and the direct-write boundary.
+The pgTAP suite uses only synthetic Auth identities and financial values inside a rolled-back transaction. It covers RLS for owner, non-owner, and anonymous roles; cross-owner FKs; exact JPY/VND/USD values and text-returning balances; before/on/after opening-date boundaries in the configured timezone; posted, voided, and future-effective account entries; account creation, rename, asset inclusion, archive, and rejection of direct edits after archive; retry conflicts, payment-method/account mismatch, archived accounts and methods, category/payment semantics; cash/debit and credit-card posting; settlements; same- and cross-currency transfers; atomic rollback; adjustments; voiding; and the direct-write boundary.
 
 ## Safe hosted deployment process
 
 No migration in this issue has been applied to the hosted Faylo project. Do not run a remote migration without explicit owner approval. When approved:
 
 1. Confirm the target project reference and environment, check the current migration history/schema, and create and verify a recoverable database backup (including a tested restore or point-in-time recovery plan). Do not rely on a local reset as a hosted backup.
-2. Review the exact migration diff and any project-specific objects/privileges with the owner. The migrations create six financial tables and a private owner allowlist; they do not seed real owner data or alter existing financial rows.
+2. Review the exact migration diff and any project-specific objects/privileges with the owner. Issue #3 creates six financial tables and a private owner allowlist; Issue #4 adds the owner-checked invoker-rights account balance projection, opening-date effectiveness, and an archived-account immutability guard. Neither seeds real owner data or alters existing financial rows.
 3. Authenticate the Supabase CLI with an approved operator credential, link only the Faylo project (`supabase link --project-ref <project-ref>`), and review `supabase migration list --linked`. Do not copy credentials into the repository or client environment.
 4. With approval, apply the pending migrations using `supabase db push --linked` during a controlled change window. Stop on any unexpected migration-history or schema difference; do not use repair/reset commands to force deployment.
 5. Provision the allowlist as above, verify owner and non-owner RLS through the API, inspect the resulting schema/migration history, and record the deployment and backup reference. If any step fails, stop and use the verified restore plan; do not improvise a destructive rollback against financial data.
 
-The hosted project was not linked, queried, or changed for Issue #3.
+The hosted project was not linked, queried, or changed for Issues #3 or #4. The Issue #4 balance-projection migration is also not deployed.
 
 ## Known limitations and future integration points
 
-- FX-rate tables, conversion fields, budgets, scheduled items, investment valuation snapshots, tracked liabilities, Telegram, and financial UI/services are deliberately absent. Transactions already preserve economic effective timestamps so later absolute valuations can order same-day movements correctly. Transfers keep actual native legs but do not record an executed FX rate.
+- FX-rate tables, conversion fields, budgets, scheduled items, investment valuation snapshots, tracked liabilities, Telegram, and transaction entry/reporting UI are deliberately absent. Account reads project opening snapshots plus posted account entries; investment projections are not market valuations. Transfers keep actual native legs but do not record an executed FX rate.
 - Category hierarchy changes and account opening baselines are immutable through ordinary client grants. Use a new category/account or explicit adjustment rather than rewriting financial history.
 - Unassigned income/expenses have no balance movement. The domain service/reporting UI must surface them for reconciliation and must distinguish credit-card expenses from unassigned expenses.
 - The currency scale mapping is a static ISO-style exponent map with a two-digit default, not a currency registry. Unknown codes with zero/three/four digits need an explicit mapping before use.
-- The schema has no balance view, FX reporting, or historical `updated_by` log for preference/configuration edits. Posted financial events and their voids are auditable; broader data export/backup workflows remain future work.
+- The schema provides an exact-text account balance projection, but no FX reporting or historical `updated_by` log for preference/configuration edits. Posted financial events and their voids are auditable; broader data export/backup workflows remain future work.
 - Account deletion is restricted while referenced; Auth user deletion is restricted while Faylo rows exist. Data-retention/deletion requires an explicit administrator-managed process.
 
 ## Official references
