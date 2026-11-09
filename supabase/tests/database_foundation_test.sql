@@ -58,10 +58,58 @@ VALUES
   ('a1111111-1111-4111-8111-111111111111', 'Cash', 'cash', (SELECT id FROM public.accounts WHERE name = 'VND Cash')),
   ('a1111111-1111-4111-8111-111111111111', 'Credit Card', 'credit_card', NULL),
   ('a1111111-1111-4111-8111-111111111111', 'USD Debit', 'debit_card', (SELECT id FROM public.accounts WHERE name = 'USD Account'));
+
 INSERT INTO public.categories (user_id, kind, name)
 VALUES
   ('a1111111-1111-4111-8111-111111111111', 'expense', 'Food'),
   ('a1111111-1111-4111-8111-111111111111', 'income', 'Salary');
+SELECT extensions.throws_ok(
+  $$DELETE FROM public.accounts WHERE name = 'VND Cash'$$,
+  '23503', NULL, 'a linked payment method prevents account deletion'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.accounts WHERE name = 'VND Cash'),
+  1,
+  'blocked deletion preserves the account linked to a payment method'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.payment_methods
+   WHERE name = 'Cash' AND linked_account_id = (SELECT id FROM public.accounts WHERE name = 'VND Cash')),
+  1,
+  'blocked deletion does not unlink or remove the payment method'
+);
+
+INSERT INTO public.accounts (user_id, name, account_kind, currency_code, opening_balance, opening_as_of)
+VALUES ('a1111111-1111-4111-8111-111111111111', 'Race guarded account', 'cash', 'JPY', 0, '2026-01-01');
+SELECT extensions.is(
+  (SELECT
+    (SELECT pg_catalog.count(*) FROM public.account_entries WHERE account_id = account.id)
+    + (SELECT pg_catalog.count(*) FROM public.payment_methods WHERE linked_account_id = account.id)
+   FROM public.accounts AS account WHERE account.name = 'Race guarded account'),
+  0::bigint,
+  'the synthetic deletion preflight sees no references before the simulated race'
+);
+INSERT INTO public.payment_methods (user_id, name, method_kind, linked_account_id)
+SELECT 'a1111111-1111-4111-8111-111111111111', 'Racing linked method', 'debit_card', id
+FROM public.accounts WHERE name = 'Race guarded account';
+SELECT extensions.throws_ok(
+  $$DELETE FROM public.accounts WHERE name = 'Race guarded account'$$,
+  '23503', NULL, 'the RESTRICT foreign key blocks a linked method created after the preflight'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.accounts WHERE name = 'Race guarded account'),
+  1,
+  'a dependency race cannot remove its account'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.payment_methods WHERE name = 'Racing linked method'),
+  1,
+  'a dependency race preserves the linked method'
+);
+
+
+
+
 
 SELECT extensions.ok(
   (SELECT pg_catalog.count(*) = 6 AND pg_catalog.bool_and(relrowsecurity AND relforcerowsecurity)
@@ -77,8 +125,8 @@ SELECT extensions.is(
 );
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.accounts WHERE user_id = auth.uid()),
-  6,
-  'approved owner can create and read balance-tracked accounts'
+  7,
+  'approved owner can read the six base accounts and one synthetic deletion-safety account'
 );
 SELECT extensions.is(
   (SELECT opening_balance::text FROM public.accounts WHERE name = 'Checking'),
@@ -113,7 +161,27 @@ SELECT extensions.is(
   'Temporary Account Renamed:false',
   'active account can be renamed and excluded from tracked assets without changing its opening snapshot'
 );
-DELETE FROM public.accounts WHERE name = 'Temporary Account Renamed';
+SELECT extensions.lives_ok(
+  $$DELETE FROM public.accounts WHERE name = 'Temporary Account Renamed'$$,
+  'approved owner can delete an unused active account'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.accounts WHERE name = 'Temporary Account Renamed'),
+  0,
+  'unused active account deletion removes only its account row'
+);
+INSERT INTO public.accounts (user_id, name, account_kind, currency_code, opening_balance, opening_as_of)
+VALUES ('a1111111-1111-4111-8111-111111111111', 'Unused archived account', 'bank', 'JPY', 0, '2026-01-01');
+UPDATE public.accounts SET status = 'archived' WHERE name = 'Unused archived account';
+SELECT extensions.lives_ok(
+  $$DELETE FROM public.accounts WHERE name = 'Unused archived account'$$,
+  'approved owner can delete an unused archived account without updating it'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.accounts WHERE name = 'Unused archived account'),
+  0,
+  'unused archived account deletion removes the account row'
+);
 INSERT INTO public.payment_methods (user_id, name, method_kind)
 VALUES ('a1111111-1111-4111-8111-111111111111', 'Temporary Method', 'other');
 UPDATE public.payment_methods SET name = 'Temporary Method Renamed' WHERE name = 'Temporary Method';
@@ -764,6 +832,87 @@ SELECT extensions.is(
   '9007199254740993.45',
   'opening balance remains available after its local effective opening instant'
 );
+INSERT INTO public.accounts (user_id, name, account_kind, currency_code, opening_balance, opening_as_of)
+VALUES ('a1111111-1111-4111-8111-111111111111', 'Race entry account', 'cash', 'JPY', 0, '2026-01-01');
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.account_entries
+   WHERE account_id = (SELECT id FROM public.accounts WHERE name = 'Race entry account')),
+  0,
+  'the synthetic entry-race preflight sees no ledger entries'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000101', 'transfer', '2026-01-02', NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object(
+        'account_id', (SELECT id::text FROM public.accounts WHERE name = 'Race entry account'),
+        'amount', '-1', 'currency_code', 'JPY'
+      ),
+      jsonb_build_object(
+        'account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'),
+        'amount', '1', 'currency_code', 'JPY'
+      )
+    )
+  )$$,
+  'a financial entry can be added after a zero-entry preflight'
+);
+SELECT extensions.throws_ok(
+  $$DELETE FROM public.accounts WHERE name = 'Race entry account'$$,
+  '23503', NULL, 'the account-entry foreign key blocks deletion after an entry is added'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.account_entries
+   WHERE account_id = (SELECT id FROM public.accounts WHERE name = 'Race entry account')),
+  1,
+  'the race-safe delete preserves the newly posted ledger entry'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.transactions
+   WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000101'),
+  1,
+  'the race-safe delete preserves the posted transaction'
+);
+
+INSERT INTO public.accounts (user_id, name, account_kind, currency_code, opening_balance, opening_as_of)
+VALUES ('a1111111-1111-4111-8111-111111111111', 'Voided entry blocker', 'cash', 'JPY', 0, '2026-01-01');
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000102', 'balance_adjustment', '2026-01-02', '1', 'JPY', NULL, NULL,
+    jsonb_build_array(jsonb_build_object(
+      'account_id', (SELECT id::text FROM public.accounts WHERE name = 'Voided entry blocker'),
+      'amount', '1', 'currency_code', 'JPY'
+    )),
+    'manual', NULL, NULL, 'Synthetic voided history check'
+  )$$,
+  'synthetic history is posted before the voided-entry delete check'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.void_transaction(
+    (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000102'),
+    'Synthetic voided history retention check'
+  )$$,
+  'synthetic history is voided but retained before deletion is attempted'
+);
+SELECT extensions.throws_ok(
+  $$DELETE FROM public.accounts WHERE name = 'Voided entry blocker'$$,
+  '23503', NULL, 'a voided transaction entry still prevents account deletion'
+);
+SELECT extensions.is(
+  (SELECT status::text FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000102'),
+  'voided',
+  'blocked account deletion preserves the voided financial event'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.account_entries
+   WHERE transaction_id = (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000102')),
+  1,
+  'blocked account deletion preserves the voided event ledger entry'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.accounts WHERE name = 'Voided entry blocker'),
+  1,
+  'blocked deletion preserves the account that owns voided ledger history'
+);
 DELETE FROM public.user_preferences WHERE user_id = 'a1111111-1111-4111-8111-111111111111';
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.user_preferences WHERE user_id = auth.uid()),
@@ -825,6 +974,26 @@ SELECT extensions.throws_ok(
   '42501', NULL, 'authenticated non-owner cannot read the private owner allowlist'
 );
 
+SELECT extensions.lives_ok(
+  $$DELETE FROM public.accounts WHERE id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'$$,
+  'authenticated non-owner account deletion executes only within the RLS-visible set'
+);
+SELECT extensions.lives_ok(
+  $$DELETE FROM public.accounts WHERE name = 'Checking'$$,
+  'authenticated non-owner cannot target the approved owner account'
+);
+
 RESET ROLE;
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.accounts
+   WHERE id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+  1,
+  'RLS leaves the non-owner account intact after an unauthorized delete attempt'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.accounts WHERE name = 'Checking'),
+  1,
+  'RLS leaves the approved owner account intact after an unauthorized delete attempt'
+);
 SELECT * FROM extensions.finish();
 ROLLBACK;

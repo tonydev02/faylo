@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { deleteUnusedAccountWithClient } from "../src/lib/accounts/delete-unused-account.ts";
 import { formatEffectiveBalance } from "../src/lib/accounts/presentation.ts";
 import { formatMoney, supportedCurrencies } from "../src/lib/accounts/money.ts";
 import {
+  accountNameMatchesConfirmation,
+  validateAccountDeletionRequest,
   validateAccountInput,
   validateAccountUpdate,
   validateOpeningBalance,
@@ -95,4 +98,77 @@ test("account updates accept only a name and tracked-assets preference", () => {
   });
   assert.equal(validateAccountUpdate("", true).ok, false);
   assert.equal(validateAccountUpdate("Account", "false").ok, false);
+});
+
+test("account deletion requires a valid account ID and the exact account name", () => {
+  const accountId = "a1111111-1111-4111-8111-111111111111";
+  assert.deepEqual(validateAccountDeletionRequest(accountId, "Everyday checking"), {
+    ok: true,
+    value: { accountId, confirmationName: "Everyday checking" },
+  });
+  assert.deepEqual(validateAccountDeletionRequest(accountId, ""), { ok: false, kind: "confirmation-required" });
+  assert.deepEqual(validateAccountDeletionRequest("not-an-id", "Everyday checking"), { ok: false, kind: "invalid-account" });
+  assert.equal(accountNameMatchesConfirmation("Everyday checking", "Everyday checking"), true);
+  assert.equal(accountNameMatchesConfirmation("Everyday checking", "everyday checking"), false);
+  assert.equal(accountNameMatchesConfirmation("Everyday checking", "Everyday checking "), false);
+});
+
+test("a rename after deletion confirmation preserves the account and requests fresh confirmation", async () => {
+  const ownerId = "a1111111-1111-4111-8111-111111111111";
+  const accountId = "b2222222-2222-4222-8222-222222222222";
+  let currentAccount = { id: accountId, name: "Old account name" };
+  const renamedAccountName = "Renamed after confirmation";
+
+  const supabase = {
+    from(table) {
+      if (!["accounts", "account_entries", "payment_methods"].includes(table)) {
+        throw new Error(`Unexpected table: ${table}`);
+      }
+      let operation = "select";
+      const filters = [];
+      const query = {
+        select() {
+          return query;
+        },
+        delete() {
+          operation = "delete";
+          return query;
+        },
+        eq(column, value) {
+          filters.push([column, value]);
+          return query;
+        },
+        maybeSingle() {
+          if (operation === "delete") currentAccount.name = renamedAccountName;
+          const matches = currentAccount && filters.every(([column, value]) => (
+            column === "user_id" ? value === ownerId : currentAccount[column] === value
+          ));
+          if (!matches) return Promise.resolve({ data: null, error: null });
+          if (operation === "delete") {
+            const deletedId = currentAccount.id;
+            currentAccount = null;
+            return Promise.resolve({ data: { id: deletedId }, error: null });
+          }
+          return Promise.resolve({
+            data: { id: currentAccount.id, name: currentAccount.name },
+            error: null,
+          });
+        },
+        then(resolve, reject) {
+          return Promise.resolve({ data: null, count: 0, error: null }).then(resolve, reject);
+        },
+      };
+      return query;
+    },
+  };
+
+  const result = await deleteUnusedAccountWithClient(
+    supabase,
+    ownerId,
+    accountId,
+    "Old account name",
+  );
+
+  assert.deepEqual(result, { ok: false, kind: "confirmation-required" });
+  assert.deepEqual(currentAccount, { id: accountId, name: renamedAccountName });
 });

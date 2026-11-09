@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { archiveAccountAction, updateAccountAction } from "@/app/accounts/actions";
+import { archiveAccountAction, deleteAccountAction, updateAccountAction } from "@/app/accounts/actions";
 import type { AccountFormState } from "@/lib/accounts/validation";
 
 const INITIAL_STATE: AccountFormState = {};
@@ -71,6 +71,33 @@ export function ArchiveAccountForm({ accountId, accountName }: { accountId: stri
       </label>
       <button className="inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-[#633f3f] bg-[#251919] px-4 text-[14px] font-medium text-[#f2c5c5] transition-colors hover:bg-[#382222] disabled:cursor-wait disabled:opacity-60 sm:w-auto" disabled={pending} type="submit">
         {pending ? "Archiving account…" : "Archive account"}
+      </button>
+    </form>
+  );
+}
+
+export function DeleteAccountForm({ accountId, accountName }: { accountId: string; accountName: string }) {
+  const [state, formAction, pending] = useActionState(deleteAccountAction, INITIAL_STATE);
+
+  return (
+    <form action={formAction} className="space-y-4">
+      {state.message && <p className="account-form-message" role="alert">{state.message}</p>}
+      <input name="accountId" type="hidden" value={accountId} />
+      <div>
+        <label className="account-field-label" htmlFor="delete-account-confirmation">
+          Type “{accountName}” to confirm permanent deletion
+        </label>
+        <input
+          autoComplete="off"
+          className="account-field-control"
+          id="delete-account-confirmation"
+          name="confirmationName"
+          placeholder={accountName}
+          required
+        />
+      </div>
+      <button className="inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-[#633f3f] bg-[#251919] px-4 text-[14px] font-medium text-[#f2c5c5] transition-colors hover:bg-[#382222] disabled:cursor-wait disabled:opacity-60 sm:w-auto" disabled={pending} type="submit">
+        {pending ? "Deleting account…" : "Delete account permanently"}
       </button>
     </form>
   );

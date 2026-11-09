@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createSupabaseServerClient } from "@/lib/auth/server";
+import { deleteUnusedAccountWithClient } from "./delete-unused-account";
 import type { AccountKind, NewAccountInput } from "./validation";
 
 export type TrackedAccount = {
@@ -16,7 +17,7 @@ export type TrackedAccount = {
   asOf: string;
 };
 
-type ServiceResult<T> = { ok: true; value: T } | { ok: false; kind: "unavailable" | "not-found" };
+type ServiceResult<T> = { ok: true; value: T } | { ok: false; kind: "unavailable" | "not-found" | "blocked" | "confirmation-required" };
 
 type RawAccount = {
   account_id: string;
@@ -158,6 +159,20 @@ export async function archiveActiveAccount(ownerId: string, accountId: string): 
     if (error) return { ok: false, kind: "unavailable" };
     if (!data) return { ok: false, kind: "not-found" };
     return { ok: true, value: data.id };
+  } catch {
+    return { ok: false, kind: "unavailable" };
+  }
+}
+export async function deleteUnusedAccount(
+  ownerId: string,
+  accountId: string,
+  confirmationName: string,
+): Promise<ServiceResult<string>> {
+  if (!UUID_PATTERN.test(ownerId) || !UUID_PATTERN.test(accountId)) return { ok: false, kind: "not-found" };
+
+  try {
+    const supabase = await createSupabaseServerClient();
+    return await deleteUnusedAccountWithClient(supabase, ownerId, accountId, confirmationName);
   } catch {
     return { ok: false, kind: "unavailable" };
   }

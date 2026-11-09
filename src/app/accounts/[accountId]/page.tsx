@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { AccountSettingsForm, ArchiveAccountForm } from "@/components/accounts/account-settings-form";
+import { AccountSettingsForm, ArchiveAccountForm, DeleteAccountForm } from "@/components/accounts/account-settings-form";
 import { formatBalanceAsOf, formatEffectiveBalance, formatOpeningDate } from "@/lib/accounts/presentation";
 import { getAccount } from "@/lib/accounts/repository";
 import { formatMoney } from "@/lib/accounts/money";
@@ -129,6 +129,15 @@ export default async function AccountDetailPage({
                 <p className="mt-2 text-[13px] leading-5 text-muted">The stored opening snapshot remains visible; its computed balance becomes available from the effective opening date. Its name, tracking preference, and status cannot be changed here.</p>
               </aside>
             )}
+            <section aria-labelledby="delete-account-title" className="rounded-3xl border border-[#633f3f] bg-[#1d1717] p-5 sm:p-6">
+              <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-[#d59494]">Danger zone</p>
+              <h2 className="mt-2 text-[17px] font-medium tracking-[-0.02em] text-ink" id="delete-account-title">Delete account</h2>
+              <p className="mb-5 mt-2 max-w-3xl text-[13px] leading-5 text-muted">
+                Archive keeps this account, its opening balance, and financial history. Delete permanently removes only an unused account and its opening balance. Accounts with any ledger entries, including voided activity, or linked payment methods cannot be deleted.
+              </p>
+              <DeleteAccountForm accountId={result.value.id} accountName={result.value.name} />
+            </section>
+
           </>
         ) : null}
       </div>
