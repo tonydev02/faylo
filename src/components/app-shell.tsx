@@ -71,11 +71,11 @@ export function Icon({ name, className = "" }: { name: IconName; className?: str
   );
 }
 
-type AppSection = "overview" | "accounts";
+type AppSection = "overview" | "accounts" | "transactions";
 
 const navigationItems: { label: string; icon: IconName; href?: string; section?: AppSection }[] = [
   { label: "Overview", icon: "overview", href: "/", section: "overview" },
-  { label: "Activity", icon: "activity" },
+  { label: "Activity", icon: "activity", href: "/transactions", section: "transactions" },
   { label: "Accounts", icon: "accounts", href: "/accounts", section: "accounts" },
   { label: "Insights", icon: "insights" },
 ];
@@ -171,7 +171,7 @@ export function AppShell({
               <Brand />
             </div>
             <p className="hidden text-[13px] text-muted lg:block">
-              Your space <span className="mx-2 text-muted/70">/</span> <span className="text-ink/85">{activeSection === "accounts" ? "Accounts" : "Overview"}</span>
+              Your space <span className="mx-2 text-muted/70">/</span> <span className="text-ink/85">{activeSection === "accounts" ? "Accounts" : activeSection === "transactions" ? "Activity" : "Overview"}</span>
             </p>
             <div className="flex items-center gap-2 sm:gap-3">
               <span className="hidden max-w-[260px] truncate text-[12px] text-muted sm:inline" title={email ?? undefined}>

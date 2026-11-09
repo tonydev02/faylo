@@ -54,3 +54,7 @@ _Avoid_: Cash transaction, credit-card expense
 **Voided transaction**:
 A previously posted transaction marked invalid for current balance and report calculations while its original details remain available for audit.
 _Avoid_: Deleted transaction, reversal entry
+
+**Transaction correction**:
+A reasoned change that preserves the invalid event for audit and links it to a replacement event; only the replacement remains effective in balances and reports.
+_Avoid_: Edited transaction, deleted transaction

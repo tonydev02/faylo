@@ -37,6 +37,13 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@v3
         with:
@@ -44,9 +51,13 @@ jobs:
       - name: Start local Supabase
         run: supabase start
       - name: Apply migrations to a clean local database
-        run: supabase db reset
+        run: supabase db reset --local
       - name: Run PostgreSQL and RLS integration tests
         run: npm run test:db
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run authenticated browser smoke test
+        run: npm run test:browser
       - name: Stop local Supabase
         if: always()
         run: supabase stop --no-backup

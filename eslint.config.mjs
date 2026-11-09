@@ -6,5 +6,5 @@ export default defineConfig([
   ...nextVitals,
   ...nextTs,
   // Project-local agent skills are third-party tooling, not application source.
-  globalIgnores([".next/**", "out/**", "build/**", ".agents/**", "next-env.d.ts"]),
+  globalIgnores([".next/**", ".next-browser/**", "out/**", "build/**", ".agents/**", "next-env.d.ts"]),
 ]);

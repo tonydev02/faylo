@@ -1,6 +1,6 @@
 # Faylo — Initial Data Model v0.2
 
-**Status:** Conceptual PostgreSQL schema for design review. This is **not executable SQL**. Replaces the preliminary v0.1 model with opening balances, payment-method-only credit cards, manual investment valuations, and reference FX overrides.
+**Status:** Conceptual PostgreSQL schema for design review, with current database semantics noted where implemented. This model includes opening balances, payment-method-only credit cards, manual investment valuations, and reference FX overrides.
 
 ## 1. Modeling approach
 
@@ -88,6 +88,13 @@ For `credit_card`, `linked_account_id` is not treated as an automatic debit sour
 - `balance_adjustment` has one entry and a mandatory reason, excluded from spending/income reports.
 - Never rely on global balance equality between the two foreign-currency transfer entries: amounts are in different units.
 
+**`transaction_corrections`**
+- `user_id` FK, `original_transaction_id` FK, `replacement_transaction_id` FK
+- `reason`, `created_at`
+- Each correction links one original to one distinct replacement, with at most one correction per original and one original per replacement.
+
+Corrections preserve the original as a voided audit record and post a new replacement atomically. The immutable linkage and reason remain available for transaction history; corrections never rewrite the original event or entries.
+
 ### Currency reference rates
 
 **`fx_rates`**
@@ -98,6 +105,8 @@ For `credit_card`, `linked_account_id` is not treated as an automatic debit sour
 - unique `(base_currency, quote_currency, effective_at, source)`
 
 Historical transaction reporting stores the **applied** JPY rate snapshot on `transactions`, allowing individual manual override and stable historical totals. For investment/account balances converted to JPY, a selected **as-of** reference FX rate can be used dynamically (with date/source shown). Cross-currency transfers store actual debit/credit legs; a reporting reference rate is not automatically the executed FX rate.
+
+Monthly income and expense totals are grouped by transaction kind and native currency. Amounts remain exact decimal text at the reporting boundary; unlike the conceptual JPY conversion above, no currencies are combined by the current transaction totals function.
 
 ### Budgets, future transactions and investments
 
@@ -149,6 +158,7 @@ Posting from a draft must be atomic and idempotent; a repeated confirmation cann
 - Every user-owned record belongs to the authorized Supabase `user_id`, protected with RLS and server-side checks.
 - `transactions` -> zero or more `account_entries`.
 - `transactions` -> optional `categories`, optional `payment_methods`.
+- A correction links one voided original transaction to one posted replacement and retains its reason as immutable audit history.
 - `account_entries` -> exactly one `accounts` record.
 - `accounts` of type investment -> zero or more absolute `investment_valuations`.
 - `budgets` -> one category per month, initially stored in JPY.

@@ -1,129 +1,107 @@
 import Link from "next/link";
 import { AppShell, Icon } from "@/components/app-shell";
+import { formatEffectiveBalance } from "@/lib/accounts/presentation";
+import { listAccounts } from "@/lib/accounts/repository";
+import { formatMoney } from "@/lib/accounts/money";
 import { requireOwner } from "@/lib/auth/server";
+import { currentMonthLabel, formatTransactionAmount, formatTransactionDate } from "@/lib/transactions/presentation";
+import { getUserTimezone, listMonthlyTransactionTotals, listTransactions, type TransactionFilters, type TransactionTotal } from "@/lib/transactions/repository";
 
 export const dynamic = "force-dynamic";
 
-const overviewCards = [
-  { label: "Tracked assets", detail: "Balances remain in each account currency" },
-  { label: "Income", detail: "Transaction entry is not available yet" },
-  { label: "Spending", detail: "Transaction entry is not available yet" },
-];
+const EMPTY_FILTERS: TransactionFilters = { search: "", kind: "all", status: "all", occurredFrom: "", occurredThrough: "" };
 
-function MetricCard({ label, detail }: { label: string; detail: string }) {
+function MonthlyTotals({ title, kind, totals }: { title: string; kind: "income" | "expense"; totals: TransactionTotal[] }) {
+  const rows = totals.filter((total) => total.kind === kind);
   return (
-    <section aria-label={`${label} placeholder`} className="rounded-3xl border border-border bg-surface p-5 sm:p-6">
+    <section aria-label={`${title} by currency`} className="rounded-3xl border border-border bg-surface p-5 sm:p-6">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-[13px] font-medium text-muted">{label}</h2>
-        <span className="size-1.5 rounded-full bg-muted/70" />
+        <h2 className="text-[13px] font-medium text-muted">{title}</h2>
+        <span className={kind === "income" ? "size-1.5 rounded-full bg-mint" : "size-1.5 rounded-full bg-muted/70"} />
       </div>
-      <p aria-label="Not available yet" className="mt-5 text-[32px] font-medium leading-none tracking-[-0.055em] text-ink/75">—</p>
-      <p className="mt-3 text-[12px] text-muted">{detail}</p>
+      {rows.length === 0 ? (
+        <p className="mt-5 text-[19px] font-medium tracking-[-0.03em] text-ink/75">No {kind} recorded</p>
+      ) : (
+        <ul className="mt-4 space-y-2">
+          {rows.map((row) => <li className="flex items-baseline justify-between gap-3" key={row.currencyCode}><span className="text-[12px] text-muted">{row.currencyCode} · {row.transactionCount} {row.transactionCount === 1 ? "event" : "events"}</span><span className={kind === "income" ? "text-[18px] font-semibold tabular-nums text-mint" : "text-[18px] font-medium tabular-nums text-ink"}>{formatMoney(row.amount, row.currencyCode)}</span></li>)}
+        </ul>
+      )}
+      <p className="mt-4 border-t border-border pt-3 text-[12px] leading-5 text-muted">{kind === "income" ? "Posted income only" : "Posted spending only"} · original currencies stay separate</p>
     </section>
-  );
-}
-
-function Principle({ number, title, children }: { number: string; title: string; children: string }) {
-  return (
-    <li className="flex gap-4">
-      <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-raised text-[12px] font-medium text-muted">{number}</span>
-      <div>
-        <h3 className="text-[13px] font-medium text-ink/90">{title}</h3>
-        <p className="mt-1 text-xs leading-[1.7] text-muted">{children}</p>
-      </div>
-    </li>
   );
 }
 
 export default async function HomePage() {
   const owner = await requireOwner();
+  const [accountsResult, totalsResult, historyResult, timezone] = await Promise.all([
+    listAccounts(owner.id),
+    listMonthlyTransactionTotals(owner.id),
+    listTransactions(owner.id, EMPTY_FILTERS, 1),
+    getUserTimezone(owner.id),
+  ]);
+  const totals = totalsResult.ok ? totalsResult.value : [];
+  const activeAccounts = accountsResult.ok ? accountsResult.value.filter((account) => account.status === "active") : [];
+  const recent = historyResult.ok ? historyResult.value.rows.slice(0, 5) : [];
 
   return (
     <AppShell email={owner.email}>
-      <div className="space-y-7 sm:space-y-8">
-        <section aria-labelledby="page-title" className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
+      <div className="mx-auto max-w-[1200px] space-y-7 sm:space-y-8">
+        <header className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
           <div className="max-w-2xl">
-            <p className="flex items-center gap-2 text-[12px] font-medium text-muted">
-              <span className="size-1.5 rounded-full bg-muted" />
-              Personal finance · private workspace
-            </p>
-            <h1 id="page-title" className="mt-4 max-w-[650px] text-[38px] font-medium leading-[1.08] tracking-[-0.055em] text-ink sm:text-[48px] lg:text-[56px]">
-              A clearer view of your money.
-            </h1>
-            <p className="mt-4 max-w-xl text-[14px] leading-7 text-muted sm:text-[15px]">
-              Enter opening balances to begin tracking each account from its effective date. Faylo does not reconstruct earlier transactions.
-            </p>
+            <p className="flex items-center gap-2 text-[12px] font-medium text-muted"><span className="size-1.5 rounded-full bg-mint" />{currentMonthLabel(new Date(), timezone)} · private workspace</p>
+            <h1 className="mt-4 text-[38px] font-medium leading-[1.08] tracking-[-0.055em] text-ink sm:text-[48px]">A clearer view of your money.</h1>
+            <p className="mt-4 max-w-xl text-[14px] leading-7 text-muted sm:text-[15px]">Review income and spending separately from account balances. Every amount stays in its original currency.</p>
           </div>
-          <span className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2 text-[12px] font-medium text-muted">
-            <Icon className="size-4 text-muted" name="shield" />
-            Google identity verified
-          </span>
-        </section>
-
-        <section aria-labelledby="setup-title" className="rounded-[28px] border border-border border-l-[3px] border-l-forest bg-surface p-5 sm:p-7 lg:p-8">
-          <div className="flex flex-col gap-7 md:flex-row md:items-center md:justify-between">
-            <div className="max-w-2xl">
-              <div className="flex items-center gap-3">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl border border-forest/60 bg-forest/25 text-mint">
-                  <Icon className="size-5" name="accounts" />
-                </span>
-                <p className="text-[12px] font-medium text-muted">Account setup</p>
-              </div>
-              <h2 className="mt-5 text-[22px] font-medium tracking-[-0.04em] text-ink sm:text-[25px]" id="setup-title">Start with a verified balance.</h2>
-              <p className="mt-2 max-w-xl text-[14px] leading-6 text-muted">
-                Add a bank, cash, or investment account. Its opening balance is a starting snapshot, never income or an expense.
-              </p>
-            </div>
-            <Link className="inline-flex min-h-12 w-fit shrink-0 items-center gap-3 rounded-2xl bg-mint px-4 text-[14px] font-semibold text-canvas transition-colors hover:bg-[#a0d8b8]" href="/accounts/new">
-              Add an account
-              <Icon className="size-4" name="arrow" />
-            </Link>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Link className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-border bg-surface px-4 text-[13px] font-medium text-ink transition-colors hover:bg-raised" href="/transactions/new?kind=income">Add income</Link>
+            <Link className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-mint px-4 text-[13px] font-semibold text-canvas transition-colors hover:bg-[#a0d8b8]" href="/transactions/new?kind=expense">Add expense <Icon className="size-4" name="arrow" /></Link>
           </div>
+        </header>
+
+        {!totalsResult.ok && <p className="account-form-message" role="alert">Monthly income and spending totals are unavailable. Check the transaction database migration.</p>}
+        <section aria-label="Monthly income and spending" className="grid gap-3 sm:grid-cols-2 sm:gap-4">
+          <MonthlyTotals kind="income" title="Income this month" totals={totals} />
+          <MonthlyTotals kind="expense" title="Spending this month" totals={totals} />
         </section>
 
-        <section aria-label="Financial overview placeholders" className="grid gap-3 sm:grid-cols-3 sm:gap-4">
-          {overviewCards.map((card) => <MetricCard key={card.label} {...card} />)}
-        </section>
-
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.85fr)]">
-          <section aria-labelledby="activity-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-7">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-[12px] font-medium text-muted">Your timeline</p>
-                <h2 id="activity-title" className="mt-2 text-lg font-medium tracking-[-0.035em] text-ink">Recent activity</h2>
-              </div>
-              <span className="rounded-full border border-border bg-raised px-2.5 py-1 text-[11px] font-medium text-muted">Placeholder</span>
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+          <section aria-labelledby="account-balances-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-7">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div><p className="text-[12px] font-medium text-muted">Native-currency accounts</p><h2 className="mt-2 text-[18px] font-medium tracking-[-0.035em] text-ink" id="account-balances-title">Account balances</h2></div>
+              <Link className="inline-flex min-h-11 items-center text-[13px] font-medium text-mint underline underline-offset-4" href="/accounts">Manage accounts</Link>
             </div>
-            <div className="mt-6 flex min-h-[174px] flex-col items-center justify-center rounded-2xl border border-dashed border-border/90 bg-canvas/25 px-5 text-center">
-              <span className="flex size-10 items-center justify-center rounded-full border border-border bg-surface text-muted">
-                <Icon className="size-[18px]" name="activity" />
-              </span>
-              <h3 className="mt-3 text-[13px] font-medium text-ink/90">Your activity will appear here</h3>
-              <p className="mt-1.5 max-w-sm text-[12px] leading-5 text-muted">Transaction entry is not available yet. Account opening snapshots do not create activity.</p>
-            </div>
+            {!accountsResult.ok ? (
+              <p className="account-form-message mt-5" role="alert">Account balances are unavailable. Check the account balance projection migration.</p>
+            ) : activeAccounts.length === 0 ? (
+              <div className="mt-5 rounded-2xl border border-dashed border-border px-5 py-8 text-center"><h3 className="text-[14px] font-medium text-ink">No active accounts</h3><p className="mt-2 text-[13px] leading-5 text-muted">Add a bank or cash account with its opening balance. The opening snapshot is not income.</p><Link className="mt-4 inline-flex min-h-11 items-center text-[13px] font-medium text-mint underline underline-offset-4" href="/accounts/new">Add an account</Link></div>
+            ) : (
+              <ul className="mt-5 divide-y divide-border">
+                {activeAccounts.map((account) => <li className="flex min-h-[70px] items-center justify-between gap-4 py-3" key={account.id}><div className="min-w-0"><Link className="truncate text-[13px] font-medium text-ink underline decoration-border underline-offset-4 hover:text-mint" href={`/accounts/${account.id}`}>{account.name}</Link><p className="mt-1 text-[11px] capitalize text-muted">{account.accountKind} · {account.currencyCode}</p></div><p className="shrink-0 text-right text-[16px] font-medium tabular-nums text-ink">{formatEffectiveBalance(account.balance, account.currencyCode)}</p></li>)}
+              </ul>
+            )}
+            <p className="mt-4 border-t border-border pt-3 text-[12px] leading-5 text-muted">Balances use the opening snapshot plus posted, non-voided account entries. Different currencies are not combined.</p>
           </section>
 
-          <section aria-labelledby="principles-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-7">
-            <div className="flex items-center gap-3">
-              <span className="flex size-9 items-center justify-center rounded-xl border border-forest/60 bg-forest/25 text-mint">
-                <Icon className="size-[18px]" name="shield" />
-              </span>
-              <div>
-                <p className="text-[12px] font-medium text-muted">Built around your rules</p>
-                <h2 id="principles-title" className="mt-1 text-[15px] font-medium tracking-[-0.02em] text-ink">A thoughtful beginning</h2>
-              </div>
+          <section aria-labelledby="recent-activity-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-7">
+            <div className="flex items-start justify-between gap-4">
+              <div><p className="text-[12px] font-medium text-muted">Income and expenses</p><h2 className="mt-2 text-[18px] font-medium tracking-[-0.035em] text-ink" id="recent-activity-title">Recent activity</h2></div>
+              <Link className="inline-flex min-h-11 items-center text-[13px] font-medium text-mint underline underline-offset-4" href="/transactions">See history</Link>
             </div>
-            <ol className="mt-6 space-y-5">
-              <Principle number="01" title="Start from your own snapshot">Account tracking will begin from an opening balance and date you choose.</Principle>
-              <Principle number="02" title="Keep the details honest">Credit cards are payment methods here, not tracked debts.</Principle>
-              <Principle number="03" title="No pretend numbers">This preview contains no personal balances or sample transactions.</Principle>
-            </ol>
+            {!historyResult.ok ? (
+              <p className="account-form-message mt-5" role="alert">Recent activity is unavailable. Try reloading the transaction history.</p>
+            ) : recent.length === 0 ? (
+              <div className="mt-5 flex min-h-[180px] flex-col items-center justify-center rounded-2xl border border-dashed border-border/90 bg-canvas/25 px-5 text-center"><span className="flex size-10 items-center justify-center rounded-full border border-border bg-surface text-muted"><Icon className="size-[18px]" name="activity" /></span><h3 className="mt-3 text-[13px] font-medium text-ink/90">No transactions yet</h3><p className="mt-1.5 max-w-sm text-[12px] leading-5 text-muted">Opening balances remain separate. Add income or spending to begin your transaction history.</p></div>
+            ) : (
+              <ul className="mt-4 divide-y divide-border">
+                {recent.map((record) => <li key={record.id}><Link className="transaction-row-link flex min-h-[66px] items-center justify-between gap-3 rounded-xl px-2 py-3 transition-colors hover:bg-canvas/70" href={`/transactions/${record.id}`}><span className="min-w-0"><span className="block truncate text-[13px] font-medium text-ink">{record.merchant ?? record.categoryName}</span><span className="mt-1 block truncate text-[11px] text-muted">{formatTransactionDate(record.occurredOn)} · {record.categoryName}</span></span><span className={record.kind === "income" ? "shrink-0 text-[14px] font-semibold tabular-nums text-mint" : "shrink-0 text-[14px] font-medium tabular-nums text-ink"}>{formatTransactionAmount(record.amount, record.currencyCode, record.kind)}</span></Link></li>)}
+              </ul>
+            )}
           </section>
         </div>
 
         <footer className="flex flex-col gap-2 border-t border-border pt-5 text-[12px] text-muted sm:flex-row sm:items-center sm:justify-between">
           <span>Faylo private workspace</span>
-          <span>Account records are stored in Supabase; transaction tools are not available yet.</span>
+          <span>Credit-card expenses do not track card debt; unassigned activity is marked for reconciliation.</span>
         </footer>
       </div>
     </AppShell>
