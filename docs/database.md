@@ -46,6 +46,8 @@ On or after midnight at the start of `opening_as_of` in the user’s configured 
 
 Account onboarding inserts one account row only. It does not create a transaction or an income/expense event. The server uses the authenticated session and the existing owner-scoped RLS grants; active accounts can change only `name` and `include_in_assets`, or transition to archived. The account kind, currency, opening amount, and opening date remain immutable. The current schema permits signed opening balances; this issue adds no nonnegative restriction. Archived accounts remain readable but are immutable after the one-way archive transition, including to direct owner updates.
 
+The owner may delete an active or archived account only when `account_entries` has no rows for it and `payment_methods` has no matching `linked_account_id`. The server-side preflight counts every entry, including entries whose transaction is voided. The owner-scoped `DELETE` relies on the existing `ON DELETE RESTRICT` foreign keys as the final defense against dependencies added after the preflight; a foreign-key violation is returned as a blocked deletion, not retried or bypassed. Future account references must keep restrictive foreign keys and should be added to the preflight if they need a specific user-facing blocker. Deleting an unused archived account performs no update, so the archived-account update guard remains unchanged. No schema migration is required.
+
 The current schema has no investment valuation table. For this issue, an investment account balance is its opening snapshot plus eligible posted account entries; this is not a market valuation.
 
 ## Atomic posting, idempotency, and voiding
@@ -94,7 +96,7 @@ supabase stop --no-backup
 
 `supabase db reset` rebuilds the local database from the versioned migrations and is the clean-database migration check. Do not add `--linked` to local reset commands. `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` cover the application checks. GitHub Actions runs a separate local Supabase/PostgreSQL integration job on pull requests. The local SMTP/Mailpit service is disabled in `supabase/config.toml` because the current Google-only authentication flow does not use email; enable it if email-flow tests are added.
 
-The pgTAP suite uses only synthetic Auth identities and financial values inside a rolled-back transaction. It covers RLS for owner, non-owner, and anonymous roles; cross-owner FKs; exact JPY/VND/USD values and text-returning balances; before/on/after opening-date boundaries in the configured timezone; posted, voided, and future-effective account entries; account creation, rename, asset inclusion, archive, and rejection of direct edits after archive; retry conflicts, payment-method/account mismatch, archived accounts and methods, category/payment semantics; cash/debit and credit-card posting; settlements; same- and cross-currency transfers; atomic rollback; adjustments; voiding; and the direct-write boundary.
+The pgTAP suite uses only synthetic Auth identities and financial values inside a rolled-back transaction. It covers RLS for owner, non-owner, and anonymous roles; cross-owner FKs; exact JPY/VND/USD values and text-returning balances; before/on/after opening-date boundaries in the configured timezone; posted, voided, and future-effective account entries; account creation, rename, asset inclusion, archive, deletion of unused active and archived accounts, and rejection of deletion with linked methods or posted/voided entries; owner-only deletion and foreign-key protection when a dependency appears after preflight; retry conflicts, payment-method/account mismatch, archived accounts and methods, category/payment semantics; cash/debit and credit-card posting; settlements; same- and cross-currency transfers; atomic rollback; adjustments; voiding; and the direct-write boundary.
 
 ## Safe hosted deployment process
 
@@ -115,7 +117,7 @@ The hosted project was not linked, queried, or changed for Issues #3 or #4. The 
 - Unassigned income/expenses have no balance movement. The domain service/reporting UI must surface them for reconciliation and must distinguish credit-card expenses from unassigned expenses.
 - The currency scale mapping is a static ISO-style exponent map with a two-digit default, not a currency registry. Unknown codes with zero/three/four digits need an explicit mapping before use.
 - The schema provides an exact-text account balance projection, but no FX reporting or historical `updated_by` log for preference/configuration edits. Posted financial events and their voids are auditable; broader data export/backup workflows remain future work.
-- Account deletion is restricted while referenced; Auth user deletion is restricted while Faylo rows exist. Data-retention/deletion requires an explicit administrator-managed process.
+- Faylo permits owner-initiated deletion of active or archived accounts only when no account entries (posted or voided) and no linked payment methods exist. Current account references use `ON DELETE RESTRICT`; future account references must retain restrictive foreign keys. Auth user deletion remains restricted while Faylo rows exist, and broader data-retention workflows remain administrator-managed.
 
 ## Official references
 

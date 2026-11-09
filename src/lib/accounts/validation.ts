@@ -6,6 +6,31 @@ export type { AccountKind };
 export type AccountField = "name" | "accountKind" | "currencyCode" | "openingBalance" | "openingAsOf" | "includeInAssets";
 export type AccountFieldErrors = Partial<Record<AccountField, string>>;
 export type AccountFormState = { message?: string; errors?: AccountFieldErrors };
+const ACCOUNT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type AccountDeletionRequest =
+  | { ok: true; value: { accountId: string; confirmationName: string } }
+  | { ok: false; kind: "invalid-account" | "confirmation-required" };
+
+export function validateAccountDeletionRequest(
+  accountIdValue: unknown,
+  confirmationNameValue: unknown,
+): AccountDeletionRequest {
+  if (typeof accountIdValue !== "string" || !ACCOUNT_ID_PATTERN.test(accountIdValue)) {
+    return { ok: false, kind: "invalid-account" };
+  }
+  if (typeof confirmationNameValue !== "string" || confirmationNameValue.length === 0) {
+    return { ok: false, kind: "confirmation-required" };
+  }
+  return { ok: true, value: { accountId: accountIdValue, confirmationName: confirmationNameValue } };
+}
+
+export function accountNameMatchesConfirmation(accountName: unknown, confirmationName: unknown): boolean {
+  return typeof accountName === "string"
+    && typeof confirmationName === "string"
+    && accountName === confirmationName;
+}
+
 
 export type NewAccountInput = {
   name: string;

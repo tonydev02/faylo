@@ -53,7 +53,7 @@ function AccountList({ accounts, emptyTitle, emptyDescription }: { accounts: Tra
   return <ul className="grid gap-3 sm:grid-cols-2 sm:gap-4">{accounts.map((account) => <AccountCard account={account} key={account.id} />)}</ul>;
 }
 
-export default async function AccountsPage({ searchParams }: { searchParams: Promise<{ archived?: string }> }) {
+export default async function AccountsPage({ searchParams }: { searchParams: Promise<{ archived?: string; deleted?: string }> }) {
   const owner = await requireOwner();
   const [result, query] = await Promise.all([listAccounts(owner.id), searchParams]);
 
@@ -74,6 +74,8 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
         </header>
 
         {query.archived === "1" && <p className="account-success-message" role="status">Account archived. Its balance is still shown; the account is now read-only.</p>}
+
+        {query.deleted === "1" && <p className="account-success-message" role="status">Unused account deleted. The accounts list is up to date.</p>}
 
         {!result.ok ? (
           <section aria-labelledby="accounts-error-title" className="rounded-3xl border border-[#633f3f] bg-[#1d1717] p-6 sm:p-8">

@@ -3,8 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth/server";
-import { archiveActiveAccount, createAccount, updateActiveAccount } from "@/lib/accounts/repository";
-import { validateAccountInput, validateAccountUpdate, type AccountFormState } from "@/lib/accounts/validation";
+import { archiveActiveAccount, createAccount, deleteUnusedAccount, updateActiveAccount } from "@/lib/accounts/repository";
+import {
+  validateAccountDeletionRequest,
+  validateAccountInput,
+  validateAccountUpdate,
+  type AccountFormState,
+} from "@/lib/accounts/validation";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -87,4 +92,40 @@ export async function archiveAccountAction(_previousState: AccountFormState, for
   revalidatePath("/accounts");
   revalidatePath(`/accounts/${accountId}`);
   redirect("/accounts?archived=1");
+}
+
+export async function deleteAccountAction(_previousState: AccountFormState, formData: FormData): Promise<AccountFormState> {
+  const owner = await requireOwner();
+  const validation = validateAccountDeletionRequest(
+    stringField(formData, "accountId"),
+    stringField(formData, "confirmationName"),
+  );
+  if (!validation.ok) {
+    return {
+      message: validation.kind === "invalid-account"
+        ? "This account could not be found."
+        : "Type the account name exactly to confirm permanent deletion.",
+    };
+  }
+
+  const result = await deleteUnusedAccount(
+    owner.id,
+    validation.value.accountId,
+    validation.value.confirmationName,
+  );
+  if (!result.ok) {
+    if (result.kind === "not-found") return { message: "This account is unavailable or no longer exists." };
+    if (result.kind === "blocked") {
+      return { message: "This account has transactions, linked payment methods, or other linked records. Archive it instead." };
+    }
+    if (result.kind === "confirmation-required") {
+      return { message: "The account name did not match. Enter the current account name exactly and try again." };
+    }
+    return { message: "The account could not be deleted safely. Try again." };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/accounts");
+  revalidatePath(`/accounts/${validation.value.accountId}`);
+  redirect("/accounts?deleted=1");
 }

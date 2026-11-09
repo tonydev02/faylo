@@ -3,6 +3,8 @@ import test from "node:test";
 import { formatEffectiveBalance } from "../src/lib/accounts/presentation.ts";
 import { formatMoney, supportedCurrencies } from "../src/lib/accounts/money.ts";
 import {
+  accountNameMatchesConfirmation,
+  validateAccountDeletionRequest,
   validateAccountInput,
   validateAccountUpdate,
   validateOpeningBalance,
@@ -95,4 +97,17 @@ test("account updates accept only a name and tracked-assets preference", () => {
   });
   assert.equal(validateAccountUpdate("", true).ok, false);
   assert.equal(validateAccountUpdate("Account", "false").ok, false);
+});
+
+test("account deletion requires a valid account ID and the exact account name", () => {
+  const accountId = "a1111111-1111-4111-8111-111111111111";
+  assert.deepEqual(validateAccountDeletionRequest(accountId, "Everyday checking"), {
+    ok: true,
+    value: { accountId, confirmationName: "Everyday checking" },
+  });
+  assert.deepEqual(validateAccountDeletionRequest(accountId, ""), { ok: false, kind: "confirmation-required" });
+  assert.deepEqual(validateAccountDeletionRequest("not-an-id", "Everyday checking"), { ok: false, kind: "invalid-account" });
+  assert.equal(accountNameMatchesConfirmation("Everyday checking", "Everyday checking"), true);
+  assert.equal(accountNameMatchesConfirmation("Everyday checking", "everyday checking"), false);
+  assert.equal(accountNameMatchesConfirmation("Everyday checking", "Everyday checking "), false);
 });
