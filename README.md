@@ -11,7 +11,7 @@ npm ci
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The current app is a foundation preview; authentication, account storage, and financial actions are not connected.
+Open [http://localhost:3000](http://localhost:3000). The app connects to Supabase for approved-owner authentication, accounts, and transaction history. Configure local credentials in `.env.local` and follow the [authentication guide](docs/authentication.md); apply migrations and run database checks as described in [database documentation](docs/database.md). Do not point local commands at the hosted Faylo project.
 
 ## Checks
 
@@ -20,9 +20,11 @@ npm test
 npm run lint
 npm run typecheck
 npm run build
+npm run test:db
+npm run test:browser
 ```
 
-GitHub Actions runs the same checks for pull requests and pushes to `main`.
+GitHub Actions runs the application, database, and browser smoke checks for pull requests and pushes to `main`.
 
 ## Configuration
 

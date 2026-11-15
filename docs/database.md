@@ -1,6 +1,6 @@
 # Faylo database foundation
 
-This schema implements the six Issue #3 tables only. It is a PostgreSQL/Supabase foundation, not a financial CRUD service or a hosted deployment.
+This schema implements the financial tables and RPCs for account balance projection and transaction entry/reporting. It is a PostgreSQL/Supabase database foundation, not a hosted deployment.
 
 ## Schema
 
@@ -12,6 +12,7 @@ This schema implements the six Issue #3 tables only. It is a PostgreSQL/Supabase
 | `categories` | Income or expense categories with an optional same-owner, same-kind parent. Kind and parent are immutable; archive instead of deleting a referenced category. |
 | `transactions` | Immutable economic events with a per-owner idempotency key; `occurred_at` is the economic effective instant and `occurred_on` its local booking/reporting date. |
 | `account_entries` | Immutable, signed balance movements. The composite foreign keys bind each entry to the same owner's transaction and to the account's currency. `recorded_at` is persistence time, not event time; entries are written only by `post_transaction`. |
+| `transaction_corrections` | Immutable owner-scoped audit linkage from a voided original transaction to its posted replacement, including the correction reason. |
 
 Every user-owned row references `auth.users`. Composite `(user_id, id)` foreign keys prevent cross-owner account, category, payment-method, transaction, and entry references. Foreign keys restrict deletion of referenced financial records; no cascade can silently erase a posted event.
 
@@ -38,6 +39,10 @@ The immutable scale helper uses 0 fraction digits for JPY/VND and other standard
 
 The table schema is not itself a precision-safe read contract. `public.account_balances_as_of(p_as_of)` returns opening amounts and computed balances as decimal text; all addition occurs in PostgreSQL. Never expose raw `numeric` as JSON numbers.
 
+`public.transaction_totals(p_month_start)` returns posted income and expense totals whose economic `occurred_at` is no later than the current statement time, as exact decimal text grouped by transaction kind and native currency. It never combines currencies; an omitted month uses the current month in the owner's configured timezone.
+
+`public.list_transactions(...)` returns a bounded, owner-scoped transaction history with exact text amounts, funding classification, status, and correction links. Search uses case-insensitive substring matching across merchant, note, category, and payment method. Date filters use the stored owner-local `occurred_on` date.
+
 ## Account balance projection
 
 `public.account_balances_as_of(p_as_of)` is an authenticated, invoker-rights read function. It checks the approved owner and queries with that session’s RLS. It returns active and archived accounts, `opening_balance` as exact decimal text, and computed `balance` as nullable exact decimal text; callers do not provide a user ID. Its default as-of instant is the database statement time.
@@ -56,13 +61,13 @@ Clients can read `transactions` and `account_entries`, but cannot insert, update
 
 The caller supplies a UUID `p_idempotency_key` and must reuse it for retries of the same logical operation. A repeated key with the same normalized event fields, exact `occurred_at`, and exact account legs returns the original transaction ID without adding rows. Reusing a key with different contents—including a different effective timestamp—raises a unique-violation error. A retry after voiding returns the original voided event; it never resurrects it.
 
-Posted events and entries are append-only. `public.void_transaction(id, reason)` permits one `posted` → `voided` transition, records `voided_at`, `voided_by`, and a mandatory reason, and retains the original transaction and entries for audit. A second void fails. Correct a mistake by voiding the original and posting a new event with a new idempotency key; do not edit balances or historical entries.
+Posted events and entries are append-only. `public.void_transaction(id, reason)` permits one `posted` → `voided` transition, records `voided_at`, `voided_by`, and a mandatory reason, and retains the original transaction and entries for audit. A second void fails. `public.correct_transaction(...)` corrects a manual income or expense by atomically voiding it and posting a replacement under a new caller-supplied idempotency key, then preserving the original/replacement link and reason in immutable audit history. A failed replacement rolls the void back. Reusing the key with the same original, reason, and exact replacement payload returns the existing replacement; mismatched retries fail before another void. Standalone voids remain available when no replacement is wanted.
 
 ## Database authorization
 
-All six user-owned tables have RLS enabled and forced, with policies requiring both `auth.uid() = user_id` and membership in `private.owner_allowlist`. The allowlist has a singleton key, an Auth-user foreign key, no grants to `anon` or `authenticated`, and lives in the `private` schema. The local API schema list exposes `public`, `storage`, and `graphql_public`, not `private`.
+All user-owned tables have RLS enabled and forced, with policies requiring both `auth.uid() = user_id` and membership in `private.owner_allowlist`. The allowlist has a singleton key, an Auth-user foreign key, no grants to `anon` or `authenticated`, and lives in the `private` schema. The local API schema list exposes `public`, `storage`, and `graphql_public`, not `private`.
 
-This is stricter than `auth.uid() = user_id`: a different authenticated Google user cannot read records or create a Faylo row with their own UUID. Table grants are also explicit; anonymous users have no table access. `post_transaction` and `void_transaction` are executable only by `authenticated` and re-check the allowlisted session inside the function. Both security-definer RPCs pin an empty `search_path` and schema-qualify referenced objects.
+This is stricter than `auth.uid() = user_id`: a different authenticated Google user cannot read records or create a Faylo row with their own UUID. Table grants are also explicit; anonymous users have no table access. Posting, voiding, and correction RPCs are executable only by `authenticated` and re-check the allowlisted session inside each function. These security-definer RPCs pin an empty `search_path` and schema-qualify referenced objects. Transaction list and totals RPCs use invoker rights and the same owner check with RLS-backed reads.
 
 The database owner UUID and the server-side `SUPABASE_OWNER_USER_ID` must be the same value. Provisioning is deny-first:
 
@@ -88,35 +93,39 @@ Account pages and Server Actions use the user's authenticated server-side Supaba
 Install the Supabase CLI and Docker using the official Supabase local-development instructions. From the repository root:
 
 ```bash
-supabase start
-supabase db reset       # destructive to the local Supabase database only
-npm run test:db         # supabase test db; runs supabase/tests/*.sql
-supabase stop --no-backup
+npx --yes supabase@2.122.1 start
+npx --yes supabase@2.122.1 db reset --local  # destructive to the local Supabase database only
+npm run test:db                              # pgTAP integration tests
+npx playwright install chromium             # once per local browser environment
+npm run test:browser                         # authenticated UI smoke test with synthetic local data
+npx --yes supabase@2.122.1 stop --no-backup
 ```
 
-`supabase db reset` rebuilds the local database from the versioned migrations and is the clean-database migration check. Do not add `--linked` to local reset commands. `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` cover the application checks. GitHub Actions runs a separate local Supabase/PostgreSQL integration job on pull requests. The local SMTP/Mailpit service is disabled in `supabase/config.toml` because the current Google-only authentication flow does not use email; enable it if email-flow tests are added.
+`supabase db reset --local` rebuilds the database from versioned migrations and is the clean-database migration check. Never add `--linked` to a local reset command. `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` cover application checks. GitHub Actions also runs local Supabase/PostgreSQL integration and authenticated browser smoke tests on pull requests.
 
-The pgTAP suite uses only synthetic Auth identities and financial values inside a rolled-back transaction. It covers RLS for owner, non-owner, and anonymous roles; cross-owner FKs; exact JPY/VND/USD values and text-returning balances; before/on/after opening-date boundaries in the configured timezone; posted, voided, and future-effective account entries; account creation, rename, asset inclusion, archive, deletion of unused active and archived accounts, and rejection of deletion with linked methods or posted/voided entries; owner-only deletion and foreign-key protection when a dependency appears after preflight; retry conflicts, payment-method/account mismatch, archived accounts and methods, category/payment semantics; cash/debit and credit-card posting; settlements; same- and cross-currency transfers; atomic rollback; adjustments; voiding; and the direct-write boundary.
+The browser setup accepts loopback Supabase URLs only. It creates a synthetic Auth user and allowlist entry for local testing; the service-role key is confined to that local test fixture, while all app routes and financial changes use the user's authenticated session. The browser flow creates its test account, categories, method, income, and expenses through Faylo's UI. Do not run it against hosted Faylo.
+
+The pgTAP suite uses only synthetic Auth identities and financial values inside a rolled-back transaction. It covers RLS for owner, non-owner, and anonymous roles; cross-owner FKs; exact JPY/VND/USD values and text-returning balances; before/on/after opening-date boundaries in the configured timezone; posted, voided, corrected, and future-effective account entries; account creation, rename, asset inclusion, archive, deletion of unused active and archived accounts, and rejection of deletion with linked methods or posted/voided entries; owner-only deletion and foreign-key protection when a dependency appears after preflight; retry conflicts, payment-method/account mismatch, archived accounts and methods, category/payment semantics; cash/debit, credit-card, and unassigned posting; settlements; same- and cross-currency transfers; correction rollback, audit linkage, idempotent replacement; native-currency monthly totals, filtered transaction history, standalone voiding, and authorization.
 
 ## Safe hosted deployment process
 
 No migration in this issue has been applied to the hosted Faylo project. Do not run a remote migration without explicit owner approval. When approved:
 
 1. Confirm the target project reference and environment, check the current migration history/schema, and create and verify a recoverable database backup (including a tested restore or point-in-time recovery plan). Do not rely on a local reset as a hosted backup.
-2. Review the exact migration diff and any project-specific objects/privileges with the owner. Issue #3 creates six financial tables and a private owner allowlist; Issue #4 adds the owner-checked invoker-rights account balance projection, opening-date effectiveness, and an archived-account immutability guard. Neither seeds real owner data or alters existing financial rows.
+2. Review the exact migration diff and any project-specific objects/privileges with the owner. Issue #3 creates the financial schema and private owner allowlist; Issue #4 adds the owner-checked invoker-rights account balance projection, opening-date effectiveness, and an archived-account immutability guard; Issue #5 adds correction audit linkage and RPCs for correction, transaction history, and native-currency monthly totals. These migrations do not seed real owner data or alter existing financial rows.
 3. Authenticate the Supabase CLI with an approved operator credential, link only the Faylo project (`supabase link --project-ref <project-ref>`), and review `supabase migration list --linked`. Do not copy credentials into the repository or client environment.
 4. With approval, apply the pending migrations using `supabase db push --linked` during a controlled change window. Stop on any unexpected migration-history or schema difference; do not use repair/reset commands to force deployment.
 5. Provision the allowlist as above, verify owner and non-owner RLS through the API, inspect the resulting schema/migration history, and record the deployment and backup reference. If any step fails, stop and use the verified restore plan; do not improvise a destructive rollback against financial data.
 
-The hosted project was not linked, queried, or changed for Issues #3 or #4. The Issue #4 balance-projection migration is also not deployed.
+The hosted project was not linked, queried, or changed for Issues #3–#5. The account-balance and transaction-experience migrations are not deployed.
 
 ## Known limitations and future integration points
 
-- FX-rate tables, conversion fields, budgets, scheduled items, investment valuation snapshots, tracked liabilities, Telegram, and transaction entry/reporting UI are deliberately absent. Account reads project opening snapshots plus posted account entries; investment projections are not market valuations. Transfers keep actual native legs but do not record an executed FX rate.
+- The current product has no FX-rate conversion, budgets, scheduled items, investment valuation snapshots, tracked liabilities, or Telegram integration. Transaction history, search/filters, and native-currency totals are available; account reads project opening snapshots plus posted account entries; investment projections are not market valuations. Transfers retain actual native legs but do not record an executed FX rate.
 - Category hierarchy changes and account opening baselines are immutable through ordinary client grants. Use a new category/account or explicit adjustment rather than rewriting financial history.
-- Unassigned income/expenses have no balance movement. The domain service/reporting UI must surface them for reconciliation and must distinguish credit-card expenses from unassigned expenses.
+- Unassigned income/expenses have no balance movement and appear in history marked for reconciliation. Credit-card expenses are distinguished from unassigned expenses and have no tracked card liability or bank movement.
 - The currency scale mapping is a static ISO-style exponent map with a two-digit default, not a currency registry. Unknown codes with zero/three/four digits need an explicit mapping before use.
-- The schema provides an exact-text account balance projection, but no FX reporting or historical `updated_by` log for preference/configuration edits. Posted financial events and their voids are auditable; broader data export/backup workflows remain future work.
+- The schema provides exact-text account balances and native-currency transaction totals, but no FX reporting or historical `updated_by` log for preference/configuration edits. Posted financial events and their voids/correction links are auditable; broader data export/backup workflows remain future work.
 - Faylo permits owner-initiated deletion of active or archived accounts only when no account entries (posted or voided) and no linked payment methods exist. Current account references use `ON DELETE RESTRICT`; future account references must retain restrictive foreign keys. Auth user deletion remains restricted while Faylo rows exist, and broader data-retention workflows remain administrator-managed.
 
 ## Official references

@@ -1,0 +1,91 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { formatTransactionAmount, formatTransactionDate, dateInTimezone } from "../src/lib/transactions/presentation.ts";
+import {
+  validateCategoryInput,
+  validatePaymentMethodInput,
+  validateTransactionInput,
+  validateVoidReason,
+} from "../src/lib/transactions/validation.ts";
+
+const id = "a1111111-1111-4111-8111-111111111111";
+const key = "b2222222-2222-4222-8222-222222222222";
+
+function validTransaction(overrides = {}) {
+  return {
+    transactionKind: "expense",
+    amount: "1200",
+    currencyCode: "JPY",
+    occurredOn: "2026-11-10",
+    categoryId: id,
+    paymentMethodId: null,
+    merchant: "Cafe",
+    note: null,
+    idempotencyKey: key,
+    ...overrides,
+  };
+}
+
+test("income and expense preserve exact native decimal strings and positive form amounts", () => {
+  for (const [currencyCode, amount] of [["JPY", "1200"], ["VND", "9007199254740993"], ["USD", "9007199254740993.45"]]) {
+    const result = validateTransactionInput(validTransaction({ amount, currencyCode }));
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.value.amount, amount);
+  }
+  assert.equal(validateTransactionInput(validTransaction({ transactionKind: "income", amount: "250.75", currencyCode: "USD" })).ok, true);
+});
+
+test("JPY/VND whole-unit and USD cent precision are enforced", () => {
+  const jpy = validateTransactionInput(validTransaction({ amount: "1200.01" }));
+  assert.equal(jpy.ok, false);
+  if (!jpy.ok) assert.match(jpy.errors.amount ?? "", /whole numbers/);
+  const vnd = validateTransactionInput(validTransaction({ currencyCode: "VND", amount: "1.5" }));
+  assert.equal(vnd.ok, false);
+  if (!vnd.ok) assert.match(vnd.errors.amount ?? "", /whole numbers/);
+  const usd = validateTransactionInput(validTransaction({ currencyCode: "USD", amount: "1.001" }));
+  assert.equal(usd.ok, false);
+  if (!usd.ok) assert.match(usd.errors.amount ?? "", /at most 2 decimal places/);
+});
+
+test("transaction form rejects non-decimal, zero, malformed date, and invalid identifiers", () => {
+  for (const amount of ["", "0", "0.00", "1e3", "1,200", "01", ".5", "1.", "-1", "+1"]) {
+    assert.equal(validateTransactionInput(validTransaction({ amount })).ok, false, amount);
+  }
+  for (const occurredOn of ["2026-02-30", "2026-2-01", "2026-01-01T12:00:00Z"]) {
+    assert.equal(validateTransactionInput(validTransaction({ occurredOn })).ok, false, occurredOn);
+  }
+  assert.equal(validateTransactionInput(validTransaction({ categoryId: "not-a-uuid" })).ok, false);
+  assert.equal(validateTransactionInput(validTransaction({ idempotencyKey: "not-a-uuid" })).ok, false);
+  assert.equal(validateTransactionInput(validTransaction({ currencyCode: "ZZZ" })).ok, false);
+});
+
+test("credit cards have no account link; funded methods require an account", () => {
+  assert.deepEqual(validatePaymentMethodInput({ name: "Visa", methodKind: "credit_card", linkedAccountId: "" }), {
+    ok: true,
+    value: { name: "Visa", methodKind: "credit_card", linkedAccountId: null },
+  });
+  assert.equal(validatePaymentMethodInput({ name: "Debit", methodKind: "debit_card", linkedAccountId: "" }).ok, false);
+  assert.equal(validatePaymentMethodInput({ name: "Card", methodKind: "credit_card", linkedAccountId: id }).ok, false);
+});
+
+test("categories keep their optional parent id and reject malformed parent ids", () => {
+  assert.deepEqual(validateCategoryInput({ kind: "expense", name: "  Travel  ", parentId: id }), {
+    ok: true,
+    value: { kind: "expense", name: "Travel", parentId: id },
+  });
+  assert.equal(validateCategoryInput({ kind: "expense", name: "Food", parentId: "bad" }).ok, false);
+  assert.equal(validateCategoryInput({ kind: "transfer", name: "Transfer", parentId: "" }).ok, false);
+});
+
+test("transaction presentation formats exact values with economic sign and date-only semantics", () => {
+  assert.equal(formatTransactionAmount("1200", "JPY", "expense"), "−¥1,200");
+  assert.equal(formatTransactionAmount("1.23", "USD", "income"), "+$1.23");
+  assert.equal(formatTransactionDate("2026-11-10"), "Nov 10, 2026");
+  assert.equal(dateInTimezone(new Date("2026-11-10T00:30:00.000Z"), "Asia/Tokyo"), "2026-11-10");
+  assert.equal(dateInTimezone(new Date("2026-11-10T00:30:00.000Z"), "America/Los_Angeles"), "2026-11-09");
+});
+
+test("voiding requires a nonblank audit reason", () => {
+  assert.match(validateVoidReason("  ") ?? "", /reason/);
+  assert.equal(validateVoidReason("Duplicate entry"), null);
+});

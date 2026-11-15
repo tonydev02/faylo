@@ -1,6 +1,8 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SELECT extensions.no_plan();
+CREATE TEMP TABLE correction_results (replacement_id uuid);
+GRANT SELECT, INSERT ON TABLE pg_temp.correction_results TO authenticated;
 
 -- Synthetic identities only. The allowlisted owner exists only inside this rolled-back test transaction.
 INSERT INTO auth.users (id, aud, role, email, created_at, updated_at)
@@ -802,6 +804,338 @@ SELECT extensions.throws_ok(
     jsonb_build_array(jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'), 'amount', '-1', 'currency_code', 'JPY'))
   )$$,
   '23503', NULL, 'posting rejects an archived payment method'
+);
+
+INSERT INTO public.accounts (user_id, name, account_kind, currency_code, opening_balance, opening_as_of)
+VALUES ('a1111111-1111-4111-8111-111111111111', 'Transaction acceptance', 'bank', 'JPY', 100000, '2026-01-01');
+INSERT INTO public.payment_methods (user_id, name, method_kind, linked_account_id)
+VALUES ('a1111111-1111-4111-8111-111111111111', 'Acceptance debit', 'debit_card',
+        (SELECT id FROM public.accounts WHERE name = 'Transaction acceptance'));
+INSERT INTO public.categories (user_id, kind, name)
+VALUES ('a1111111-1111-4111-8111-111111111111', 'expense', 'Transport');
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000201', 'expense', '2026-10-05', '1200', 'JPY',
+    (SELECT id FROM public.categories WHERE name = 'Food'),
+    (SELECT id FROM public.payment_methods WHERE name = 'Acceptance debit'),
+    jsonb_build_array(jsonb_build_object(
+      'account_id', (SELECT id::text FROM public.accounts WHERE name = 'Transaction acceptance'),
+      'amount', '-1200', 'currency_code', 'JPY'
+    ))
+  )$$,
+  'acceptance expense posts against the exact ¥100,000 opening snapshot'
+);
+SELECT extensions.is(
+  (SELECT balance FROM public.account_balances_as_of('2026-10-05 23:59:59+09'::timestamptz)
+   WHERE name = 'Transaction acceptance'),
+  '98800',
+  '¥100,000 opening less ¥1,200 expense projects exactly ¥98,800'
+);
+SELECT extensions.is(
+  (SELECT total_amount FROM public.transaction_totals('2026-10-01')
+   WHERE transaction_kind = 'expense' AND currency_code = 'JPY'),
+  '1200',
+  'October native-currency spending totals ¥1,200'
+);
+CREATE TEMP TABLE future_expense_test_context AS
+WITH future_event AS (
+  SELECT pg_catalog.statement_timestamp() + INTERVAL '1 day' AS occurred_at
+)
+SELECT future_event.occurred_at,
+       (future_event.occurred_at AT TIME ZONE 'Asia/Tokyo')::date AS occurred_on,
+       pg_catalog.date_trunc('month', future_event.occurred_at AT TIME ZONE 'Asia/Tokyo')::date AS month_start,
+       COALESCE(month_total.total_amount, '0') AS prior_total_amount,
+       COALESCE(month_total.transaction_count, 0::bigint) AS prior_transaction_count
+FROM future_event
+LEFT JOIN LATERAL public.transaction_totals(
+  pg_catalog.date_trunc('month', future_event.occurred_at AT TIME ZONE 'Asia/Tokyo')::date
+) AS month_total
+  ON month_total.transaction_kind = 'expense' AND month_total.currency_code = 'JPY';
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000206', 'expense',
+    (SELECT occurred_on FROM pg_temp.future_expense_test_context),
+    '777', 'JPY', (SELECT id FROM public.categories WHERE name = 'Food'),
+    NULL, '[]'::jsonb, 'manual', 'Future-effective monthly expense', NULL, NULL,
+    (SELECT occurred_at FROM pg_temp.future_expense_test_context)
+  )$$,
+  'a posted expense can be recorded with a future effective instant'
+);
+SELECT extensions.is(
+  (SELECT status::text FROM public.transactions
+   WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000206'),
+  'posted',
+  'the future-effective expense remains posted'
+);
+SELECT extensions.is(
+  COALESCE((
+    SELECT month_total.total_amount
+    FROM public.transaction_totals((SELECT month_start FROM pg_temp.future_expense_test_context)) AS month_total
+    WHERE month_total.transaction_kind = 'expense' AND month_total.currency_code = 'JPY'
+  ), '0'),
+  (SELECT prior_total_amount FROM pg_temp.future_expense_test_context),
+  'future-effective posted expense does not change exact monthly spending before its effective instant'
+);
+SELECT extensions.is(
+  COALESCE((
+    SELECT month_total.transaction_count
+    FROM public.transaction_totals((SELECT month_start FROM pg_temp.future_expense_test_context)) AS month_total
+    WHERE month_total.transaction_kind = 'expense' AND month_total.currency_code = 'JPY'
+  ), 0::bigint),
+  (SELECT prior_transaction_count FROM pg_temp.future_expense_test_context),
+  'future-effective posted expense is not counted before its effective instant'
+);
+
+SELECT extensions.throws_ok(
+  $$SELECT * FROM public.transaction_totals('2026-10-05')$$,
+  '22023', NULL, 'monthly totals require a first-of-month boundary'
+);
+SELECT extensions.throws_ok(
+  $$SELECT public.correct_transaction(
+    (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000201'),
+    'c0000000-0000-4000-8000-000000000202', 'expense', '2026-10-05', '1500', 'JPY',
+    (SELECT id FROM public.categories WHERE name = 'Salary'),
+    (SELECT id FROM public.payment_methods WHERE name = 'Acceptance debit'),
+    jsonb_build_array(jsonb_build_object(
+      'account_id', (SELECT id::text FROM public.accounts WHERE name = 'Transaction acceptance'),
+      'amount', '-1500', 'currency_code', 'JPY'
+    )), 'wrong replacement category'
+  )$$,
+  '23503', NULL, 'failed replacement validation rolls the original void transition back'
+);
+SELECT extensions.is(
+  (SELECT status::text FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000201'),
+  'posted',
+  'failed correction leaves its original transaction posted'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.transaction_corrections),
+  0,
+  'failed correction leaves no audit linkage row'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000203', 'income', '2026-10-06', '5000', 'JPY',
+    (SELECT id FROM public.categories WHERE name = 'Salary'),
+    (SELECT id FROM public.payment_methods WHERE name = 'Acceptance debit'),
+    jsonb_build_array(jsonb_build_object(
+      'account_id', (SELECT id::text FROM public.accounts WHERE name = 'Transaction acceptance'),
+      'amount', '5000', 'currency_code', 'JPY'
+    ))
+  )$$,
+  'income posting increases the tracked balance'
+);
+SELECT extensions.is(
+  (SELECT balance FROM public.account_balances_as_of('2026-10-06 23:59:59+09'::timestamptz)
+   WHERE name = 'Transaction acceptance'),
+  '103800',
+  'posted income adds exactly once to the same native-currency balance'
+);
+SELECT extensions.is(
+  (SELECT transaction_count FROM public.transaction_totals('2026-10-01')
+   WHERE transaction_kind = 'income' AND currency_code = 'JPY'),
+  1::bigint,
+  'income is counted once in its native-currency monthly group'
+);
+INSERT INTO pg_temp.correction_results (replacement_id)
+SELECT public.correct_transaction(
+  (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000201'),
+  'c0000000-0000-4000-8000-000000000202', 'expense', '2026-10-05', '1500', 'JPY',
+  (SELECT id FROM public.categories WHERE name = 'Transport'),
+  (SELECT id FROM public.payment_methods WHERE name = 'Acceptance debit'),
+  jsonb_build_array(jsonb_build_object(
+    'account_id', (SELECT id::text FROM public.accounts WHERE name = 'Transaction acceptance'),
+    'amount', '-1500', 'currency_code', 'JPY'
+  )), 'Corrected category and amount'
+);
+SELECT extensions.is(
+  (SELECT replacement_id FROM pg_temp.correction_results),
+  (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000202'),
+  'atomic correction returns its replacement transaction ID'
+);
+SELECT extensions.is(
+  (SELECT status::text || ':' || void_reason FROM public.transactions
+   WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000201'),
+  'voided:Corrected category and amount',
+  'correction preserves the original voided transaction and reason for audit'
+);
+SELECT extensions.is(
+  (SELECT category.name || ':' || transaction_row.amount::text
+   FROM public.transactions AS transaction_row
+   JOIN public.categories AS category
+     ON category.user_id = transaction_row.user_id AND category.id = transaction_row.category_id
+   WHERE transaction_row.idempotency_key = 'c0000000-0000-4000-8000-000000000202'),
+  'Transport:1500',
+  'replacement records its new category and exact replacement amount'
+);
+SELECT extensions.is(
+  (SELECT balance FROM public.account_balances_as_of('2026-10-06 23:59:59+09'::timestamptz)
+   WHERE name = 'Transaction acceptance'),
+  '103500',
+  'replacement-only balance effect restores the original debit then applies the corrected debit'
+);
+SELECT extensions.is(
+  (SELECT total_amount FROM public.transaction_totals('2026-10-01')
+   WHERE transaction_kind = 'expense' AND currency_code = 'JPY'),
+  '1500',
+  'monthly spending includes only the posted replacement, never the voided original'
+);
+SELECT extensions.is(
+  (SELECT corrected_from_transaction_id
+   FROM public.list_transactions(p_transaction_id =>
+     (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000202'))),
+  (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000201'),
+  'transaction list exposes correction linkage from the replacement'
+);
+SELECT extensions.is(
+  public.correct_transaction(
+    (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000201'),
+    'c0000000-0000-4000-8000-000000000202', 'expense', '2026-10-05', '1500', 'JPY',
+    (SELECT id FROM public.categories WHERE name = 'Transport'),
+    (SELECT id FROM public.payment_methods WHERE name = 'Acceptance debit'),
+    jsonb_build_array(jsonb_build_object(
+      'account_id', (SELECT id::text FROM public.accounts WHERE name = 'Transaction acceptance'),
+      'amount', '-1500', 'currency_code', 'JPY'
+    )), 'Corrected category and amount'
+  ),
+  (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000202'),
+  'identical correction retry returns the same replacement'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.transactions
+   WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000202'),
+  1,
+  'correction retry creates no duplicate replacement transaction'
+);
+SELECT extensions.throws_ok(
+  $$SELECT public.correct_transaction(
+    (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000201'),
+    'c0000000-0000-4000-8000-000000000202', 'expense', '2026-10-05', '1600', 'JPY',
+    (SELECT id FROM public.categories WHERE name = 'Transport'),
+    (SELECT id FROM public.payment_methods WHERE name = 'Acceptance debit'),
+    jsonb_build_array(jsonb_build_object(
+      'account_id', (SELECT id::text FROM public.accounts WHERE name = 'Transaction acceptance'),
+      'amount', '-1600', 'currency_code', 'JPY'
+    )), 'Corrected category and amount'
+  )$$,
+  '23505', NULL, 'changed correction payload on an existing key is rejected'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000204', 'expense', '2026-10-07', '700', 'JPY',
+    (SELECT id FROM public.categories WHERE name = 'Food'),
+    (SELECT id FROM public.payment_methods WHERE name = 'Credit Card'), '[]'::jsonb
+  )$$,
+  'credit-card expense remains recordable without a bank movement'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000205', 'expense', '2026-10-08', '300', 'JPY',
+    (SELECT id FROM public.categories WHERE name = 'Food'), NULL, '[]'::jsonb
+  )$$,
+  'unassigned expense remains recordable without an invented payment method or entry'
+);
+SELECT extensions.is(
+  (SELECT string_agg(transaction_row.idempotency_key::text || ':' || listing.funding_status, ',' ORDER BY transaction_row.idempotency_key)
+   FROM public.transactions AS transaction_row
+   JOIN LATERAL public.list_transactions(p_transaction_id => transaction_row.id) AS listing ON true
+   WHERE transaction_row.idempotency_key IN (
+     'c0000000-0000-4000-8000-000000000204', 'c0000000-0000-4000-8000-000000000205'
+   )),
+  'c0000000-0000-4000-8000-000000000204:credit_card,c0000000-0000-4000-8000-000000000205:unassigned',
+  'list classifies credit-card and unassigned expenses distinctly'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.account_entries AS entry
+   JOIN public.transactions AS transaction_row ON transaction_row.user_id = entry.user_id AND transaction_row.id = entry.transaction_id
+   WHERE transaction_row.idempotency_key IN (
+     'c0000000-0000-4000-8000-000000000204', 'c0000000-0000-4000-8000-000000000205'
+   )),
+  0,
+  'credit-card and unassigned expenses create no bank entries'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.void_transaction(
+    (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000205'),
+    'Standalone void test'
+  )$$,
+  'standalone void retains the financial event for audit'
+);
+SELECT extensions.is(
+  (SELECT status::text || ':' || void_reason FROM public.transactions
+   WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000205'),
+  'voided:Standalone void test',
+  'standalone void preserves status and reason'
+);
+SELECT extensions.is(
+  (SELECT total_amount FROM public.transaction_totals('2026-10-01')
+   WHERE transaction_kind = 'expense' AND currency_code = 'JPY'),
+  '2200',
+  'standalone void removes its amount from monthly spending while retaining the event'
+);
+SELECT extensions.throws_ok(
+  $$SELECT public.list_transactions(p_limit => 101)$$,
+  '22023', NULL, 'transaction list enforces bounded page size'
+);
+SELECT extensions.ok(
+  (SELECT pg_catalog.bool_and(relrowsecurity AND relforcerowsecurity)
+   FROM pg_catalog.pg_class WHERE oid = 'public.transaction_corrections'::regclass),
+  'correction linkage table forces row-level security'
+);
+SELECT extensions.throws_ok(
+  $$UPDATE public.transaction_corrections SET reason = 'rewrite'$$,
+  '42501', NULL, 'correction history cannot be updated directly'
+);
+SELECT extensions.throws_ok(
+  $$DELETE FROM public.transaction_corrections$$,
+  '42501', NULL, 'correction history cannot be deleted directly'
+);
+SELECT extensions.throws_ok(
+  $$INSERT INTO public.transaction_corrections (user_id, original_transaction_id, replacement_transaction_id, reason)
+    VALUES (auth.uid(), 'c0000000-0000-4000-8000-000000000201', 'c0000000-0000-4000-8000-000000000202', 'direct write')$$,
+  '42501', NULL, 'correction history cannot be inserted directly'
+);
+
+RESET ROLE;
+SET LOCAL ROLE anon;
+SET LOCAL request.jwt.claim.sub = '';
+SET LOCAL request.jwt.claims = '{}';
+SELECT extensions.throws_ok($$SELECT * FROM public.categories$$, '42501', NULL, 'anonymous category reads are denied');
+SELECT extensions.throws_ok($$SELECT * FROM public.payment_methods$$, '42501', NULL, 'anonymous payment-method reads are denied');
+SELECT extensions.throws_ok($$SELECT * FROM public.list_transactions()$$, '42501', NULL, 'anonymous transaction list access is denied');
+SELECT extensions.throws_ok($$SELECT * FROM public.transaction_totals()$$, '42501', NULL, 'anonymous transaction totals access is denied');
+SELECT extensions.throws_ok(
+  $$SELECT public.correct_transaction(NULL, NULL, 'expense', NULL, NULL, NULL, NULL, NULL, '[]', 'reason')$$,
+  '42501', NULL, 'anonymous correction RPC execution is denied'
+);
+SELECT extensions.throws_ok($$SELECT * FROM public.transaction_corrections$$, '42501', NULL, 'anonymous correction audit reads are denied');
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claim.sub = 'b2222222-2222-4222-8222-222222222222';
+SET LOCAL request.jwt.claims = '{"sub":"b2222222-2222-4222-8222-222222222222","role":"authenticated"}';
+SELECT extensions.throws_ok($$SELECT * FROM public.list_transactions()$$, '42501', NULL, 'non-owner transaction list access is denied');
+SELECT extensions.throws_ok($$SELECT * FROM public.transaction_totals()$$, '42501', NULL, 'non-owner transaction totals access is denied');
+SELECT extensions.throws_ok(
+  $$SELECT public.correct_transaction(NULL, NULL, 'expense', NULL, NULL, NULL, NULL, NULL, '[]', 'reason')$$,
+  '42501', NULL, 'non-owner correction RPC execution is denied'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.transaction_corrections),
+  0,
+  'non-owner cannot read correction audit linkage rows'
+);
+SELECT extensions.is((SELECT pg_catalog.count(*)::integer FROM public.categories), 0, 'non-owner cannot read categories');
+SELECT extensions.is((SELECT pg_catalog.count(*)::integer FROM public.payment_methods), 0, 'non-owner cannot read payment methods');
+
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claim.sub = 'a1111111-1111-4111-8111-111111111111';
+SET LOCAL request.jwt.claims = '{"sub":"a1111111-1111-4111-8111-111111111111","role":"authenticated"}';
+SELECT extensions.is(
+  (SELECT total_count FROM public.list_transactions(p_search => 'transport', p_kind => 'expense', p_status => 'posted',
+    p_occurred_from => '2026-10-01', p_occurred_through => '2026-10-31', p_limit => 1)),
+  1::bigint,
+  'transaction list filters case-insensitively across category with date, type, status, and bounded pagination'
 );
 
 UPDATE public.user_preferences SET timezone = 'America/Los_Angeles' WHERE user_id = auth.uid();
