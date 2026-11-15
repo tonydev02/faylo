@@ -39,7 +39,7 @@ The immutable scale helper uses 0 fraction digits for JPY/VND and other standard
 
 The table schema is not itself a precision-safe read contract. `public.account_balances_as_of(p_as_of)` returns opening amounts and computed balances as decimal text; all addition occurs in PostgreSQL. Never expose raw `numeric` as JSON numbers.
 
-`public.transaction_totals(p_month_start)` returns posted income and expense totals as exact decimal text grouped by transaction kind and native currency. It never combines currencies; an omitted month uses the current month in the owner's configured timezone.
+`public.transaction_totals(p_month_start)` returns posted income and expense totals whose economic `occurred_at` is no later than the current statement time, as exact decimal text grouped by transaction kind and native currency. It never combines currencies; an omitted month uses the current month in the owner's configured timezone.
 
 `public.list_transactions(...)` returns a bounded, owner-scoped transaction history with exact text amounts, funding classification, status, and correction links. Search uses case-insensitive substring matching across merchant, note, category, and payment method. Date filters use the stored owner-local `occurred_on` date.
 

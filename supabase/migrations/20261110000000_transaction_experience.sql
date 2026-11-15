@@ -287,6 +287,7 @@ BEGIN
     AND transaction_row.transaction_kind IN ('income', 'expense')
     AND transaction_row.occurred_on >= v_month_start
     AND transaction_row.occurred_on < (v_month_start + INTERVAL '1 month')::date
+    AND transaction_row.occurred_at <= pg_catalog.statement_timestamp()
   GROUP BY transaction_row.transaction_kind, transaction_row.currency_code
   ORDER BY transaction_row.transaction_kind, transaction_row.currency_code;
 END;

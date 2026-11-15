@@ -9,7 +9,7 @@ import { getUserTimezone, listMonthlyTransactionTotals, listTransactions, type T
 
 export const dynamic = "force-dynamic";
 
-const EMPTY_FILTERS: TransactionFilters = { search: "", kind: "all", status: "all", occurredFrom: "", occurredThrough: "" };
+const RECENT_ACTIVITY_FILTERS: TransactionFilters = { search: "", kind: "all", status: "posted", occurredFrom: "", occurredThrough: "" };
 
 function MonthlyTotals({ title, kind, totals }: { title: string; kind: "income" | "expense"; totals: TransactionTotal[] }) {
   const rows = totals.filter((total) => total.kind === kind);
@@ -36,7 +36,7 @@ export default async function HomePage() {
   const [accountsResult, totalsResult, historyResult, timezone] = await Promise.all([
     listAccounts(owner.id),
     listMonthlyTransactionTotals(owner.id),
-    listTransactions(owner.id, EMPTY_FILTERS, 1),
+    listTransactions(owner.id, RECENT_ACTIVITY_FILTERS, 1),
     getUserTimezone(owner.id),
   ]);
   const totals = totalsResult.ok ? totalsResult.value : [];

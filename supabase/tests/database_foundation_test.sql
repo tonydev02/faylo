@@ -837,6 +837,54 @@ SELECT extensions.is(
   '1200',
   'October native-currency spending totals ¥1,200'
 );
+CREATE TEMP TABLE future_expense_test_context AS
+WITH future_event AS (
+  SELECT pg_catalog.statement_timestamp() + INTERVAL '1 day' AS occurred_at
+)
+SELECT future_event.occurred_at,
+       (future_event.occurred_at AT TIME ZONE 'Asia/Tokyo')::date AS occurred_on,
+       pg_catalog.date_trunc('month', future_event.occurred_at AT TIME ZONE 'Asia/Tokyo')::date AS month_start,
+       COALESCE(month_total.total_amount, '0') AS prior_total_amount,
+       COALESCE(month_total.transaction_count, 0::bigint) AS prior_transaction_count
+FROM future_event
+LEFT JOIN LATERAL public.transaction_totals(
+  pg_catalog.date_trunc('month', future_event.occurred_at AT TIME ZONE 'Asia/Tokyo')::date
+) AS month_total
+  ON month_total.transaction_kind = 'expense' AND month_total.currency_code = 'JPY';
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000206', 'expense',
+    (SELECT occurred_on FROM pg_temp.future_expense_test_context),
+    '777', 'JPY', (SELECT id FROM public.categories WHERE name = 'Food'),
+    NULL, '[]'::jsonb, 'manual', 'Future-effective monthly expense', NULL, NULL,
+    (SELECT occurred_at FROM pg_temp.future_expense_test_context)
+  )$$,
+  'a posted expense can be recorded with a future effective instant'
+);
+SELECT extensions.is(
+  (SELECT status::text FROM public.transactions
+   WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000206'),
+  'posted',
+  'the future-effective expense remains posted'
+);
+SELECT extensions.is(
+  COALESCE((
+    SELECT month_total.total_amount
+    FROM public.transaction_totals((SELECT month_start FROM pg_temp.future_expense_test_context)) AS month_total
+    WHERE month_total.transaction_kind = 'expense' AND month_total.currency_code = 'JPY'
+  ), '0'),
+  (SELECT prior_total_amount FROM pg_temp.future_expense_test_context),
+  'future-effective posted expense does not change exact monthly spending before its effective instant'
+);
+SELECT extensions.is(
+  COALESCE((
+    SELECT month_total.transaction_count
+    FROM public.transaction_totals((SELECT month_start FROM pg_temp.future_expense_test_context)) AS month_total
+    WHERE month_total.transaction_kind = 'expense' AND month_total.currency_code = 'JPY'
+  ), 0::bigint),
+  (SELECT prior_transaction_count FROM pg_temp.future_expense_test_context),
+  'future-effective posted expense is not counted before its effective instant'
+);
 
 SELECT extensions.throws_ok(
   $$SELECT * FROM public.transaction_totals('2026-10-05')$$,

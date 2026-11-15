@@ -118,6 +118,9 @@ test("fresh-owner transaction flow, correction, void, balances, filters, and mob
   await expect(page.getByRole("status")).toContainText("Transaction voided.");
 
   await page.goto("/");
+  const recentActivity = page.getByRole("region", { name: "Recent activity" });
+  await expect(recentActivity.getByRole("heading", { name: "No transactions yet" })).toBeVisible();
+  await expect(recentActivity.getByRole("link", { name: /Lunch/ })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByText("No expense recorded", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥100,000", { exact: true })).toBeVisible();
 

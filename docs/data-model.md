@@ -106,7 +106,7 @@ Corrections preserve the original as a voided audit record and post a new replac
 
 Historical transaction reporting stores the **applied** JPY rate snapshot on `transactions`, allowing individual manual override and stable historical totals. For investment/account balances converted to JPY, a selected **as-of** reference FX rate can be used dynamically (with date/source shown). Cross-currency transfers store actual debit/credit legs; a reporting reference rate is not automatically the executed FX rate.
 
-Monthly income and expense totals are grouped by transaction kind and native currency. Amounts remain exact decimal text at the reporting boundary; unlike the conceptual JPY conversion above, no currencies are combined by the current transaction totals function.
+Monthly income and expense totals include only posted events effective by the current statement time. They are grouped by transaction kind and native currency, and amounts remain exact decimal text at the reporting boundary; no currencies are combined.
 
 ### Budgets, future transactions and investments
 
