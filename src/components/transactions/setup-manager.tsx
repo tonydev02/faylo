@@ -122,7 +122,7 @@ function PaymentMethodCreateForm({ accounts }: { accounts: TrackedAccount[] }) {
         </div>
       </div>
       {creditCard
-        ? <p className="text-[12px] leading-5 text-muted">Credit cards have no linked account or tracked liability in Faylo. A purchase is counted as an expense only.</p>
+        ? <p className="text-[12px] leading-5 text-muted">Credit cards have no linked account or tracked liability in Faylo. Purchases count as expenses, but outstanding balances and statement reconciliation are not tracked.</p>
         : activeAccounts.length === 0
           ? <p className="text-[12px] leading-5 text-muted">Create an active bank or cash account before adding a funded payment method.</p>
           : <p className="text-[12px] leading-5 text-muted">The linked account determines the original transaction currency and receives or funds the account entry.</p>}

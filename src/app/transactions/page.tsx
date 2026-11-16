@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AppShell, Icon } from "@/components/app-shell";
 import { formatTransactionAmount, formatTransactionDate } from "@/lib/transactions/presentation";
 import { listTransactions, type TransactionFilters, type TransactionRecord } from "@/lib/transactions/repository";
-import { isValidTransactionDate, type TransactionKind, type TransactionStatus } from "@/lib/transactions/validation";
+import { isValidTransactionDate, type TransactionEventKind, type TransactionStatus } from "@/lib/transactions/validation";
 import { requireOwner } from "@/lib/auth/server";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -19,8 +19,11 @@ function buildPageUrl(filters: TransactionFilters, page: number): string {
 }
 
 function fundingLabel(record: TransactionRecord): string {
+  if (record.kind === "card_settlement") {
+    return `Paid from ${record.fundingAccountName ?? "tracked account"} · ${record.paymentMethodName ?? "credit card"}`;
+  }
   if (record.fundingStatus === "unassigned") return "Unassigned · reconcile";
-  if (record.fundingStatus === "credit_card") return `${record.paymentMethodName ?? "Credit card"} · no balance tracked`;
+  if (record.fundingStatus === "credit_card") return `${record.paymentMethodName ?? "Credit card"} · no card balance tracked`;
   return `${record.fundingAccountName ?? "Tracked account"}${record.paymentMethodName ? ` · ${record.paymentMethodName}` : ""}`;
 }
 
@@ -32,7 +35,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
   const requestedStatus = scalar("status");
   const filters: TransactionFilters = {
     search: scalar("q").trim(),
-    kind: requestedKind === "income" || requestedKind === "expense" ? requestedKind as TransactionKind : "all",
+    kind: requestedKind === "income" || requestedKind === "expense" || requestedKind === "card_settlement" ? requestedKind as TransactionEventKind : "all",
     status: requestedStatus === "posted" || requestedStatus === "voided" ? requestedStatus as TransactionStatus : "all",
     occurredFrom: scalar("from"),
     occurredThrough: scalar("to"),
@@ -53,12 +56,13 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
       <div className="mx-auto max-w-[1200px] space-y-7">
         <header className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div>
-            <p className="text-[12px] font-medium text-muted">Income and spending</p>
+            <p className="text-[12px] font-medium text-muted">Income, spending and settlements</p>
             <h1 className="mt-2 text-[34px] font-medium leading-tight tracking-[-0.05em] text-ink sm:text-[42px]">Transactions</h1>
-            <p className="mt-3 max-w-2xl text-[14px] leading-6 text-muted">Search and review posted events in their original currencies. Opening balances are snapshots, not income.</p>
+            <p className="mt-3 max-w-2xl text-[14px] leading-6 text-muted">Card purchases count once as spending; later settlements debit an account without another expense. Faylo does not track outstanding card balances or reconcile statements, so tracked assets can overstate net worth.</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Link className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-border bg-surface px-4 text-[13px] font-medium text-ink transition-colors hover:bg-raised" href="/transactions/categories">Categories & methods</Link>
+            <Link className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-border bg-surface px-4 text-[13px] font-medium text-ink transition-colors hover:bg-raised" href="/transactions/settlement">Settle a card</Link>
             <Link className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-mint px-4 text-[13px] font-semibold text-canvas transition-colors hover:bg-[#a0d8b8]" href="/transactions/new">Add transaction <Icon className="size-4" name="arrow" /></Link>
           </div>
         </header>
@@ -73,7 +77,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
             <div>
               <label className="account-field-label" htmlFor="transaction-kind-filter">Type</label>
               <select className="account-field-control" defaultValue={filters.kind} id="transaction-kind-filter" name="kind">
-                <option value="all">All types</option><option value="expense">Expenses</option><option value="income">Income</option>
+                <option value="all">All types</option><option value="expense">Expenses</option><option value="income">Income</option><option value="card_settlement">Card settlements</option>
               </select>
             </div>
             <div>

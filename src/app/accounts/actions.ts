@@ -42,6 +42,7 @@ export async function createAccountAction(_previousState: AccountFormState, form
 
   revalidatePath("/");
   revalidatePath("/accounts");
+  revalidatePath("/transactions/settlement");
   redirect(`/accounts/${result.value}?created=1`);
 }
 
@@ -67,6 +68,7 @@ export async function updateAccountAction(_previousState: AccountFormState, form
 
   revalidatePath("/");
   revalidatePath("/accounts");
+  revalidatePath("/transactions/settlement");
   revalidatePath(`/accounts/${accountId}`);
   redirect(`/accounts/${accountId}?saved=1`);
 }
@@ -90,6 +92,7 @@ export async function archiveAccountAction(_previousState: AccountFormState, for
 
   revalidatePath("/");
   revalidatePath("/accounts");
+  revalidatePath("/transactions/settlement");
   revalidatePath(`/accounts/${accountId}`);
   redirect("/accounts?archived=1");
 }
@@ -126,6 +129,7 @@ export async function deleteAccountAction(_previousState: AccountFormState, form
 
   revalidatePath("/");
   revalidatePath("/accounts");
+  revalidatePath("/transactions/settlement");
   revalidatePath(`/accounts/${validation.value.accountId}`);
   redirect("/accounts?deleted=1");
 }

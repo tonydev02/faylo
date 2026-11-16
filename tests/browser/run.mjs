@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { APP_ORIGIN, TEST_OWNER_ID } from "./constants.mjs";
+import { APP_ORIGIN } from "./constants.mjs";
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: process.cwd(), encoding: "utf8", ...options });
@@ -27,6 +28,8 @@ if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsedUrl.hostname)) {
   throw new Error("Browser smoke tests accept loopback Supabase URLs only; hosted projects are not supported.");
 }
 
+const testOwnerId = process.env.FAYLO_BROWSER_TEST_OWNER_ID ?? randomUUID();
+const testEmail = process.env.FAYLO_BROWSER_TEST_EMAIL ?? `issue6-browser-${testOwnerId}@local.test`;
 const env = {
   ...process.env,
   LOCAL_SUPABASE_URL: parsedUrl.origin,
@@ -34,7 +37,9 @@ const env = {
   LOCAL_SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
   NEXT_PUBLIC_SUPABASE_URL: parsedUrl.origin,
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: publishableKey,
-  SUPABASE_OWNER_USER_ID: TEST_OWNER_ID,
+  FAYLO_BROWSER_TEST_OWNER_ID: testOwnerId,
+  FAYLO_BROWSER_TEST_EMAIL: testEmail,
+  SUPABASE_OWNER_USER_ID: testOwnerId,
   APP_URL: APP_ORIGIN,
 };
 const result = run("npx", ["playwright", "test", ...process.argv.slice(2)], { env, stdio: "inherit" });

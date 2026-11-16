@@ -196,7 +196,7 @@ export function TransactionForm({
           <FieldError id="transaction-payment-method-error" message={paymentMethodError} />
           <p className="account-field-help">
             {selectedMethod?.methodKind === "credit_card"
-              ? "Credit-card purchases count as spending without changing a bank balance or tracking card debt."
+              ? "Credit-card purchases count as spending without changing a bank balance. Faylo does not track outstanding card balances or reconcile statements; tracked assets can overstate net worth."
               : selectedMethod?.accountName
                 ? `This transaction will use ${selectedMethod.accountName} in ${selectedMethod.accountCurrency}.`
                 : "Unassigned activity is reportable but does not change an account balance. Add a payment method to track funded activity."}

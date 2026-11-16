@@ -1,12 +1,15 @@
 import { currencyFractionDigits } from "../accounts/money.ts";
 
 export type TransactionKind = "income" | "expense";
+export type TransactionEventKind = TransactionKind | "card_settlement";
 export type TransactionStatus = "posted" | "voided";
 export type PaymentMethodKind = "cash" | "debit_card" | "credit_card" | "bank_transfer" | "other";
 export type TransactionField = "transactionKind" | "amount" | "currencyCode" | "occurredOn" | "categoryId" | "paymentMethodId" | "merchant" | "note";
 export type TransactionFormState = { message?: string; errors?: Partial<Record<TransactionField, string>> };
 export type CategoryFormState = { message?: string; errors?: Partial<Record<"kind" | "name" | "parentId", string>> };
 export type PaymentMethodFormState = { message?: string; errors?: Partial<Record<"name" | "methodKind" | "linkedAccountId", string>> };
+export type CardSettlementField = "amount" | "currencyCode" | "occurredOn" | "paymentMethodId" | "accountId" | "note";
+export type CardSettlementFormState = { message?: string; errors?: Partial<Record<CardSettlementField, string>> };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AMOUNT_PATTERN = /^(0|[1-9][0-9]*)(?:\.([0-9]+))?$/;
@@ -40,6 +43,20 @@ export type TransactionInput = {
   note: string | null;
   idempotencyKey: string;
 };
+
+export type CardSettlementInput = {
+  amount: string;
+  currencyCode: string;
+  occurredOn: string;
+  paymentMethodId: string;
+  accountId: string;
+  note: string | null;
+  idempotencyKey: string;
+};
+
+export type CardSettlementValidation =
+  | { ok: true; value: CardSettlementInput }
+  | { ok: false; errors: Partial<Record<CardSettlementField, string>> };
 
 export type TransactionValidation =
   | { ok: true; value: TransactionInput }
@@ -107,6 +124,53 @@ export function validateTransactionInput(fields: Record<string, unknown>): Trans
       note,
       idempotencyKey,
     },
+  };
+}
+
+export function validateCardSettlementInput(fields: Record<string, unknown>): CardSettlementValidation {
+  const errors: Partial<Record<CardSettlementField, string>> = {};
+  const amount = typeof fields.amount === "string" ? fields.amount : "";
+  const amountMatch = AMOUNT_PATTERN.exec(amount);
+  const currencyCode = typeof fields.currencyCode === "string" ? fields.currencyCode : "";
+  const fractionDigits = currencyFractionDigits(currencyCode);
+
+  if (!amountMatch || !hasNonzeroDigit(amount)) {
+    errors.amount = "Enter a positive decimal amount without commas or exponent notation.";
+  } else {
+    const whole = amount.split(".", 1)[0] ?? "0";
+    const fraction = amountMatch[2] ?? "";
+    if (whole.length > MAX_NUMERIC_INTEGER_DIGITS) {
+      errors.amount = "This amount is too large for the database.";
+    } else if (fractionDigits === null) {
+      errors.currencyCode = "Choose a supported ISO currency.";
+    } else if (fraction.length > fractionDigits) {
+      errors.amount = fractionDigits === 0
+        ? `${currencyCode} amounts must be whole numbers.`
+        : `${currencyCode} allows at most ${fractionDigits} decimal places.`;
+    }
+  }
+  if (fractionDigits === null) errors.currencyCode = "Choose a supported ISO currency.";
+
+  const occurredOn = typeof fields.occurredOn === "string" ? fields.occurredOn : "";
+  if (!isValidDateOnly(occurredOn)) errors.occurredOn = "Enter a real payment date.";
+
+  const paymentMethodId = typeof fields.paymentMethodId === "string" ? fields.paymentMethodId : "";
+  if (!UUID_PATTERN.test(paymentMethodId)) errors.paymentMethodId = "Choose an active credit card.";
+
+  const accountId = typeof fields.accountId === "string" ? fields.accountId : "";
+  if (!UUID_PATTERN.test(accountId)) errors.accountId = "Choose an active bank or cash account.";
+
+  const idempotencyKey = typeof fields.idempotencyKey === "string" ? fields.idempotencyKey : "";
+  if (!UUID_PATTERN.test(idempotencyKey)) errors.amount = "Refresh the page before submitting this settlement.";
+
+  const rawNote = fields.note;
+  const note = typeof rawNote === "string" ? rawNote.trim() || null : null;
+  if (typeof rawNote === "string" && rawNote.length > 4000) errors.note = "Keep the note to 4,000 characters or fewer.";
+
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+  return {
+    ok: true,
+    value: { amount, currencyCode, occurredOn, paymentMethodId, accountId, note, idempotencyKey },
   };
 }
 
