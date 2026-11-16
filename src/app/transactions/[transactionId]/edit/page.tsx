@@ -41,7 +41,7 @@ export default async function EditTransactionPage({ params }: { params: Promise<
 
         {!transactionResult.ok || !setupResult.ok ? (
           <section aria-labelledby="correction-data-error-title" className="rounded-3xl border border-[#633f3f] bg-[#1d1717] p-6"><h2 className="text-[18px] font-medium text-ink" id="correction-data-error-title">Correction details are unavailable</h2><p className="mt-2 text-[13px] leading-6 text-muted">The original transaction or setup data could not be loaded. No financial record was changed.</p></section>
-        ) : transaction && transaction.status === "posted" && transaction.kind !== "card_settlement" ? (
+        ) : transaction && transaction.status === "posted" && (transaction.kind === "income" || transaction.kind === "expense") && transaction.amount !== null && transaction.currencyCode !== null ? (
           <section aria-labelledby="correction-form-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-7 lg:p-8">
             <div className="mb-6 border-b border-border pb-5">
               <h2 className="text-[18px] font-medium tracking-[-0.025em] text-ink" id="correction-form-title">Replacement details</h2>
@@ -77,7 +77,7 @@ export default async function EditTransactionPage({ params }: { params: Promise<
             />
           </section>
         ) : (
-          <section aria-labelledby="correction-unavailable-title" className="rounded-3xl border border-border bg-surface p-6 sm:p-8"><h2 className="text-[18px] font-medium text-ink" id="correction-unavailable-title">This transaction cannot be edited</h2><p className="mt-2 text-[13px] leading-6 text-muted">Only posted income and expenses can be corrected. Card settlements stay in history; void one with a reason if it must be reversed.</p><Link className="mt-4 inline-flex min-h-11 items-center text-[13px] font-medium text-mint underline underline-offset-4" href={`/transactions/${transactionId}`}>View transaction history</Link></section>
+          <section aria-labelledby="correction-unavailable-title" className="rounded-3xl border border-border bg-surface p-6 sm:p-8"><h2 className="text-[18px] font-medium text-ink" id="correction-unavailable-title">This transaction cannot be edited</h2><p className="mt-2 text-[13px] leading-6 text-muted">Only posted income and expenses can be corrected. Transfers, balance adjustments, and card settlements remain immutable; void them with a reason if a reversal is needed.</p><Link className="mt-4 inline-flex min-h-11 items-center text-[13px] font-medium text-mint underline underline-offset-4" href={`/transactions/${transactionId}`}>View transaction history</Link></section>
         )}
       </div>
     </AppShell>

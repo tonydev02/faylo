@@ -1,7 +1,7 @@
 import { currencyFractionDigits } from "../accounts/money.ts";
 
 export type TransactionKind = "income" | "expense";
-export type TransactionEventKind = TransactionKind | "card_settlement";
+export type TransactionEventKind = TransactionKind | "card_settlement" | "transfer" | "balance_adjustment";
 export type TransactionStatus = "posted" | "voided";
 export type PaymentMethodKind = "cash" | "debit_card" | "credit_card" | "bank_transfer" | "other";
 export type TransactionField = "transactionKind" | "amount" | "currencyCode" | "occurredOn" | "categoryId" | "paymentMethodId" | "merchant" | "note";
@@ -10,6 +10,10 @@ export type CategoryFormState = { message?: string; errors?: Partial<Record<"kin
 export type PaymentMethodFormState = { message?: string; errors?: Partial<Record<"name" | "methodKind" | "linkedAccountId", string>> };
 export type CardSettlementField = "amount" | "currencyCode" | "occurredOn" | "paymentMethodId" | "accountId" | "note";
 export type CardSettlementFormState = { message?: string; errors?: Partial<Record<CardSettlementField, string>> };
+export type AccountTransferField = "sourceAccountId" | "destinationAccountId" | "sentAmount" | "receivedAmount" | "occurredOn" | "note";
+export type BalanceAdjustmentField = "accountId" | "amount" | "occurredOn" | "reason";
+export type AccountMovementField = AccountTransferField | BalanceAdjustmentField;
+export type AccountMovementFormState = { message?: string; errors?: Partial<Record<AccountMovementField, string>> };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AMOUNT_PATTERN = /^(0|[1-9][0-9]*)(?:\.([0-9]+))?$/;
@@ -53,6 +57,27 @@ export type CardSettlementInput = {
   note: string | null;
   idempotencyKey: string;
 };
+export type AccountTransferInput = {
+  sourceAccountId: string;
+  destinationAccountId: string;
+  sentAmount: string;
+  receivedAmount: string;
+  occurredOn: string;
+  note: string | null;
+  idempotencyKey: string;
+};
+
+export type BalanceAdjustmentInput = {
+  accountId: string;
+  amount: string;
+  occurredOn: string;
+  reason: string;
+  idempotencyKey: string;
+};
+
+export type AccountMovementValidation<T> =
+  | { ok: true; value: T }
+  | { ok: false; errors: Partial<Record<AccountMovementField, string>>; message?: string };
 
 export type CardSettlementValidation =
   | { ok: true; value: CardSettlementInput }
@@ -173,6 +198,69 @@ export function validateCardSettlementInput(fields: Record<string, unknown>): Ca
     value: { amount, currencyCode, occurredOn, paymentMethodId, accountId, note, idempotencyKey },
   };
 }
+function movementAmountError(value: string, signed: boolean): string | null {
+  const pattern = signed ? /^(-?)(0|[1-9][0-9]*)(?:\.([0-9]+))?$/ : AMOUNT_PATTERN;
+  const match = pattern.exec(value);
+  if (!match || !hasNonzeroDigit(value)) return signed
+    ? "Enter a non-zero signed decimal amount without commas or exponent notation."
+    : "Enter a positive decimal amount without commas or exponent notation.";
+  const whole = value.replace(/^-/, "").split(".", 1)[0] ?? "0";
+  if (whole.length > MAX_NUMERIC_INTEGER_DIGITS) return "This amount is too large for the database.";
+  return null;
+}
+
+export function validateAccountTransferInput(fields: Record<string, unknown>): AccountMovementValidation<AccountTransferInput> {
+  const errors: Partial<Record<AccountTransferField, string>> = {};
+  const sourceAccountId = typeof fields.sourceAccountId === "string" ? fields.sourceAccountId : "";
+  const destinationAccountId = typeof fields.destinationAccountId === "string" ? fields.destinationAccountId : "";
+  if (!UUID_PATTERN.test(sourceAccountId)) errors.sourceAccountId = "Choose an active source account.";
+  if (!UUID_PATTERN.test(destinationAccountId)) errors.destinationAccountId = "Choose an active destination account.";
+  else if (destinationAccountId === sourceAccountId) errors.destinationAccountId = "Choose a different destination account.";
+
+  const sentAmount = typeof fields.sentAmount === "string" ? fields.sentAmount : "";
+  const sentAmountError = movementAmountError(sentAmount, false);
+  if (sentAmountError) errors.sentAmount = sentAmountError;
+  const receivedAmount = typeof fields.receivedAmount === "string" ? fields.receivedAmount : "";
+  const receivedAmountError = movementAmountError(receivedAmount, false);
+  if (receivedAmountError) errors.receivedAmount = receivedAmountError;
+
+  const occurredOn = typeof fields.occurredOn === "string" ? fields.occurredOn : "";
+  if (!isValidDateOnly(occurredOn)) errors.occurredOn = "Enter a real economic date.";
+  const rawNote = fields.note;
+  const note = typeof rawNote === "string" ? rawNote.trim() || null : null;
+  if (typeof rawNote === "string" && rawNote.length > 4000) errors.note = "Keep the note to 4,000 characters or fewer.";
+  const idempotencyKey = typeof fields.idempotencyKey === "string" ? fields.idempotencyKey : "";
+  const message = UUID_PATTERN.test(idempotencyKey) ? undefined : "Refresh the page before submitting this transfer.";
+
+  if (Object.keys(errors).length > 0 || message) return { ok: false, errors, message };
+  return {
+    ok: true,
+    value: { sourceAccountId, destinationAccountId, sentAmount, receivedAmount, occurredOn, note, idempotencyKey },
+  };
+}
+
+export function validateBalanceAdjustmentInput(fields: Record<string, unknown>): AccountMovementValidation<BalanceAdjustmentInput> {
+  const errors: Partial<Record<BalanceAdjustmentField, string>> = {};
+  const accountId = typeof fields.accountId === "string" ? fields.accountId : "";
+  if (!UUID_PATTERN.test(accountId)) errors.accountId = "Choose an active account.";
+
+  const amount = typeof fields.amount === "string" ? fields.amount : "";
+  const amountError = movementAmountError(amount, true);
+  if (amountError) errors.amount = amountError;
+
+  const occurredOn = typeof fields.occurredOn === "string" ? fields.occurredOn : "";
+  if (!isValidDateOnly(occurredOn)) errors.occurredOn = "Enter a real economic date.";
+  const rawReason = fields.reason;
+  const reason = typeof rawReason === "string" ? rawReason.trim() : "";
+  if (!reason) errors.reason = "Explain why this balance is being adjusted.";
+  else if (reason.length > 500) errors.reason = "Keep the explanation to 500 characters or fewer.";
+
+  const idempotencyKey = typeof fields.idempotencyKey === "string" ? fields.idempotencyKey : "";
+  const message = UUID_PATTERN.test(idempotencyKey) ? undefined : "Refresh the page before submitting this adjustment.";
+  if (Object.keys(errors).length > 0 || message) return { ok: false, errors, message };
+  return { ok: true, value: { accountId, amount, occurredOn, reason, idempotencyKey } };
+}
+
 
 export function validateTransactionId(value: unknown): value is string {
   return typeof value === "string" && UUID_PATTERN.test(value);

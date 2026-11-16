@@ -179,6 +179,28 @@ SELECT extensions.is(
 INSERT INTO public.accounts (user_id, name, account_kind, currency_code, opening_balance, opening_as_of)
 VALUES ('a1111111-1111-4111-8111-111111111111', 'Unused archived account', 'bank', 'JPY', 0, '2026-01-01');
 UPDATE public.accounts SET status = 'archived' WHERE name = 'Unused archived account';
+SELECT extensions.throws_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000039', 'transfer', '2026-01-02', NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'), 'amount', '-100', 'currency_code', 'JPY'),
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Unused archived account'), 'amount', '100', 'currency_code', 'JPY')
+    )
+  )$$,
+  '23514', NULL,
+  'transfers reject an archived destination account'
+);
+SELECT extensions.throws_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000040', 'transfer', '2026-01-02', NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'), 'amount', '-100', 'currency_code', 'JPY'),
+      jsonb_build_object('account_id', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'amount', '100', 'currency_code', 'JPY')
+    )
+  )$$,
+  '23503', NULL,
+  'transfers reject an account owned by another user'
+);
 SELECT extensions.lives_ok(
   $$DELETE FROM public.accounts WHERE name = 'Unused archived account'$$,
   'approved owner can delete an unused archived account without updating it'
@@ -243,6 +265,17 @@ SELECT extensions.throws_ok(
   )$$,
   '23514', NULL, 'account opening date rejects financial entries before tracking begins'
 );
+SELECT extensions.throws_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000043', 'transfer', '2026-05-31', NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'), 'amount', '-100', 'currency_code', 'JPY'),
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Late Account'), 'amount', '100', 'currency_code', 'JPY')
+    )
+  )$$,
+  '23514', NULL,
+  'transfers reject dates before either account opening date'
+);
 SELECT extensions.lives_ok(
   $$SELECT public.post_transaction(
     'c0000000-0000-4000-8000-000000000015', 'expense', '2026-06-01', '100', 'JPY',
@@ -286,6 +319,17 @@ SELECT extensions.throws_ok(
     (SELECT id FROM public.categories WHERE name = 'Food'), NULL, '[]'::jsonb
   )$$,
   '22023', NULL, 'posting rejects fractional yen before any row is written'
+);
+SELECT extensions.throws_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000044', 'transfer', '2026-01-02', NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'), 'amount', '-100.01', 'currency_code', 'JPY'),
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Savings'), 'amount', '100.01', 'currency_code', 'JPY')
+    )
+  )$$,
+  '22023', NULL,
+  'transfer legs reject amounts beyond their account currency precision'
 );
 SELECT extensions.throws_ok(
   $$SELECT public.post_transaction(
@@ -416,6 +460,31 @@ SELECT extensions.is(
      AND transaction_kind IN ('income', 'expense')),
   0,
   'transfer does not create an income or expense report row'
+);
+SELECT extensions.throws_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000038', 'transfer', '2026-01-12', NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'), 'amount', '-100', 'currency_code', 'JPY'),
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Savings'), 'amount', '99', 'currency_code', 'JPY')
+    )
+  )$$,
+  '23514', NULL,
+  'same-currency transfer rejects unequal debit and credit amounts'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.transactions
+   WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000038'),
+  0,
+  'rejected same-currency transfer leaves no transaction'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.account_entries AS entry
+   JOIN public.transactions AS transaction_row
+     ON transaction_row.user_id = entry.user_id AND transaction_row.id = entry.transaction_id
+   WHERE transaction_row.idempotency_key = 'c0000000-0000-4000-8000-000000000038'),
+  0,
+  'rejected same-currency transfer leaves no account entries'
 );
 
 SELECT extensions.lives_ok(
@@ -1141,6 +1210,80 @@ SELECT extensions.is(
   1::bigint,
   'transaction list filters case-insensitively across category with date, type, status, and bounded pagination'
 );
+SELECT extensions.is(
+  (SELECT transaction_kind || ':' || source || ':' || status
+   FROM public.list_transactions(
+     p_kind => 'transfer',
+     p_transaction_id => (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000004'),
+     p_limit => 1
+   )),
+  'transfer:manual:posted',
+  'history includes own-account transfers with their source and status'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.string_agg(
+     pg_catalog.concat_ws(':', movement.value ->> 'account_name', movement.value ->> 'amount', movement.value ->> 'currency_code'),
+     ',' ORDER BY movement.ordinality
+   )
+   FROM public.list_transactions(
+     p_transaction_id => (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000004')
+   ) AS listing
+   CROSS JOIN LATERAL pg_catalog.jsonb_array_elements(listing.account_movements) WITH ORDINALITY AS movement(value, ordinality)),
+  'Checking:-30000:JPY,Savings:30000:JPY',
+  'history preserves both ordered same-currency transfer legs as exact account-native amounts'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.string_agg(
+     pg_catalog.concat_ws(':', movement.value ->> 'account_name', movement.value ->> 'amount', movement.value ->> 'currency_code'),
+     ',' ORDER BY movement.ordinality
+   )
+   FROM public.list_transactions(
+     p_transaction_id => (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000005')
+   ) AS listing
+   CROSS JOIN LATERAL pg_catalog.jsonb_array_elements(listing.account_movements) WITH ORDINALITY AS movement(value, ordinality)),
+  'USD Account:-100.00:USD,Savings:15000:JPY',
+  'cross-currency history exposes the actual unequal debit and credit without a rate'
+);
+SELECT extensions.is(
+  (SELECT transaction_kind || ':' || amount || ':' || currency_code || ':' || source || ':' || status
+          || ':' || adjustment_reason || ':' || void_reason || ':' || (voided_by = auth.uid())::text
+   FROM public.list_transactions(
+     p_kind => 'balance_adjustment',
+     p_transaction_id => (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000008'),
+     p_status => 'voided',
+     p_limit => 1
+   )),
+  'balance_adjustment:500:JPY:manual:voided:Synthetic reconciliation correction:Synthetic duplicate correction:true',
+  'adjustment history retains its signed amount, explicit explanation, void reason, and owner audit actor'
+);
+SELECT extensions.is(
+  (SELECT total_count FROM public.list_transactions(
+     p_search => 'reconciliation correction',
+     p_kind => 'balance_adjustment',
+     p_status => 'voided',
+     p_limit => 1
+   )),
+  1::bigint,
+  'adjustment history can be searched by its audit explanation'
+);
+SELECT extensions.is(
+  (SELECT total_count FROM public.list_transactions(
+     p_search => 'checking',
+     p_kind => 'transfer',
+     p_transaction_id => (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000004'),
+     p_limit => 1
+   )),
+  1::bigint,
+  'transfer history search finds either account by name'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.transaction_totals('2026-01-01')
+   WHERE transaction_kind IN ('transfer', 'balance_adjustment')),
+  0,
+  'monthly income and expense reporting excludes transfers and adjustments'
+);
+
+
 
 UPDATE public.user_preferences SET timezone = 'America/Los_Angeles' WHERE user_id = auth.uid();
 SELECT extensions.is(
@@ -1482,6 +1625,94 @@ SELECT extensions.is(
   ), 0) - (SELECT purchase_month_expenses FROM pg_temp.card_settlement_test_baseline),
   10000::numeric,
   'voiding the settlement leaves the credit-card purchase in spending totals'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000037', 'balance_adjustment', '2026-05-01', '-250', 'JPY', NULL, NULL,
+    jsonb_build_array(jsonb_build_object(
+      'account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'),
+      'amount', '-250', 'currency_code', 'JPY'
+    )),
+    'manual', NULL, NULL, 'Synthetic negative reconciliation'
+  )$$,
+  'a negative balance adjustment posts as a signed account debit with an explanation'
+);
+SELECT extensions.is(
+  (SELECT amount::text || ':' || adjustment_reason
+   FROM public.list_transactions(
+     p_kind => 'balance_adjustment',
+     p_transaction_id => (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000037'),
+     p_status => 'posted',
+     p_limit => 1
+   )),
+  '-250:Synthetic negative reconciliation',
+  'history retains the exact negative adjustment amount and its explanation'
+);
+CREATE TEMP TABLE adjustment_balance_before_void AS
+SELECT projection.name, projection.balance::numeric AS balance
+FROM public.transactions AS transaction_row
+CROSS JOIN LATERAL public.account_balances_as_of(transaction_row.occurred_at) AS projection
+WHERE transaction_row.idempotency_key = 'c0000000-0000-4000-8000-000000000037'
+  AND projection.name = 'Checking';
+SELECT extensions.lives_ok(
+  $$SELECT public.void_transaction(
+    (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000037'),
+    'Synthetic adjustment reversal'
+  )$$,
+  'a signed balance adjustment can be voided without rewriting its entry'
+);
+SELECT extensions.is(
+  (SELECT current.balance::numeric - prior.balance
+   FROM public.transactions AS transaction_row
+   CROSS JOIN LATERAL public.account_balances_as_of(transaction_row.occurred_at) AS current
+   JOIN pg_temp.adjustment_balance_before_void AS prior ON prior.name = current.name
+   WHERE transaction_row.idempotency_key = 'c0000000-0000-4000-8000-000000000037'),
+  250::numeric,
+  'voiding a negative adjustment restores the exact derived balance'
+);
+
+CREATE TEMP TABLE transfer_balance_before_void AS
+SELECT projection.name, projection.balance::numeric AS balance
+FROM public.transactions AS transaction_row
+CROSS JOIN LATERAL public.account_balances_as_of(transaction_row.occurred_at) AS projection
+WHERE transaction_row.idempotency_key = 'c0000000-0000-4000-8000-000000000004'
+  AND projection.name IN ('Checking', 'Savings');
+SELECT extensions.lives_ok(
+  $$SELECT public.void_transaction(
+    (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000004'),
+    'Synthetic transfer reversal'
+  )$$,
+  'a posted transfer can be voided without deleting either immutable entry'
+);
+SELECT extensions.is(
+  (SELECT current.balance::numeric - prior.balance
+   FROM public.transactions AS transaction_row
+   CROSS JOIN LATERAL public.account_balances_as_of(transaction_row.occurred_at) AS current
+   JOIN pg_temp.transfer_balance_before_void AS prior ON prior.name = current.name
+   WHERE transaction_row.idempotency_key = 'c0000000-0000-4000-8000-000000000004'
+     AND current.name = 'Checking'),
+  30000::numeric,
+  'voiding a transfer reverses its source debit in the derived balance'
+);
+SELECT extensions.is(
+  (SELECT current.balance::numeric - prior.balance
+   FROM public.transactions AS transaction_row
+   CROSS JOIN LATERAL public.account_balances_as_of(transaction_row.occurred_at) AS current
+   JOIN pg_temp.transfer_balance_before_void AS prior ON prior.name = current.name
+   WHERE transaction_row.idempotency_key = 'c0000000-0000-4000-8000-000000000004'
+     AND current.name = 'Savings'),
+  -30000::numeric,
+  'voiding a transfer reverses its destination credit in the derived balance'
+);
+SELECT extensions.is(
+  (SELECT transaction_kind || ':' || status || ':' || void_reason || ':' || (voided_by = auth.uid())::text
+   FROM public.list_transactions(
+     p_transaction_id => (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000004'),
+     p_status => 'voided',
+     p_limit => 1
+   )),
+  'transfer:voided:Synthetic transfer reversal:true',
+  'voided transfer history preserves both event audit and reversal details'
 );
 DELETE FROM public.user_preferences WHERE user_id = 'a1111111-1111-4111-8111-111111111111';
 SELECT extensions.is(

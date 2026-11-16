@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatTransactionAmount, formatTransactionDate, dateInTimezone } from "../src/lib/transactions/presentation.ts";
+import { formatSignedAmount, formatTransactionAmount, formatTransactionDate, dateInTimezone } from "../src/lib/transactions/presentation.ts";
 import {
+  validateAccountTransferInput,
+  validateBalanceAdjustmentInput,
   validateCategoryInput,
   validateCardSettlementInput,
   validatePaymentMethodInput,
@@ -35,6 +37,30 @@ function validSettlement(overrides = {}) {
     paymentMethodId: id,
     accountId: "c3333333-3333-4333-8333-333333333333",
     note: "  October card bill  ",
+    idempotencyKey: key,
+    ...overrides,
+  };
+}
+
+function validTransfer(overrides = {}) {
+  return {
+    sourceAccountId: id,
+    destinationAccountId: "c3333333-3333-4333-8333-333333333333",
+    sentAmount: "30000",
+    receivedAmount: "30000",
+    occurredOn: "2026-11-10",
+    note: "  Move to savings  ",
+    idempotencyKey: key,
+    ...overrides,
+  };
+}
+
+function validAdjustment(overrides = {}) {
+  return {
+    accountId: id,
+    amount: "-500",
+    occurredOn: "2026-11-10",
+    reason: "  Reconciled statement  ",
     idempotencyKey: key,
     ...overrides,
   };
@@ -125,4 +151,49 @@ test("transaction presentation formats exact values with economic sign and date-
 test("voiding requires a nonblank audit reason", () => {
   assert.match(validateVoidReason("  ") ?? "", /reason/);
   assert.equal(validateVoidReason("Duplicate entry"), null);
+});
+
+test("own-account transfer validation retains both actual decimal amounts", () => {
+  const valid = validateAccountTransferInput(validTransfer({
+    sentAmount: "9007199254740993.45",
+    receivedAmount: "123456789012345678.90",
+  }));
+  assert.equal(valid.ok, true);
+  if (valid.ok) {
+    assert.equal(valid.value.sentAmount, "9007199254740993.45");
+    assert.equal(valid.value.receivedAmount, "123456789012345678.90");
+    assert.equal(valid.value.note, "Move to savings");
+  }
+
+  assert.equal(validateAccountTransferInput(validTransfer({ destinationAccountId: id })).ok, false);
+  for (const amount of ["", "0", "0.00", "1e3", "1,000", "01", "-1", "+1"]) {
+    assert.equal(validateAccountTransferInput(validTransfer({ sentAmount: amount })).ok, false, amount);
+  }
+  assert.equal(validateAccountTransferInput(validTransfer({ occurredOn: "2026-02-30" })).ok, false);
+  assert.equal(validateAccountTransferInput(validTransfer({ sourceAccountId: "not-an-id" })).ok, false);
+  assert.equal(validateAccountTransferInput(validTransfer({ idempotencyKey: "not-an-id" })).ok, false);
+});
+
+test("balance adjustments preserve signed values and require a concise explanation", () => {
+  const negative = validateBalanceAdjustmentInput(validAdjustment());
+  assert.equal(negative.ok, true);
+  if (negative.ok) {
+    assert.equal(negative.value.amount, "-500");
+    assert.equal(negative.value.reason, "Reconciled statement");
+  }
+  assert.equal(validateBalanceAdjustmentInput(validAdjustment({ amount: "500" })).ok, true);
+  for (const amount of ["", "0", "0.00", "-0", "-0.00", "1e3", "1,000", "+1"]) {
+    assert.equal(validateBalanceAdjustmentInput(validAdjustment({ amount })).ok, false, amount);
+  }
+  assert.equal(validateBalanceAdjustmentInput(validAdjustment({ reason: "   " })).ok, false);
+  assert.equal(validateBalanceAdjustmentInput(validAdjustment({ reason: "x".repeat(501) })).ok, false);
+  assert.equal(validateBalanceAdjustmentInput(validAdjustment({ occurredOn: "2026-02-30" })).ok, false);
+  assert.equal(validateBalanceAdjustmentInput(validAdjustment({ accountId: "not-an-id" })).ok, false);
+});
+
+test("signed adjustment and transfer legs present without numeric conversion", () => {
+  assert.equal(formatTransactionAmount("500", "JPY", "balance_adjustment"), "+¥500");
+  assert.equal(formatTransactionAmount("-500", "JPY", "balance_adjustment"), "−¥500");
+  assert.equal(formatSignedAmount("9007199254740993.45", "USD"), "+$9,007,199,254,740,993.45");
+  assert.equal(formatSignedAmount("-30000", "JPY"), "−¥30,000");
 });
