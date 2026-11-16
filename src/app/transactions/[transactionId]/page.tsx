@@ -55,7 +55,7 @@ export default async function TransactionDetailPage({
             </header>
 
             {query.created === "1" && <p className="account-success-message" role="status">Transaction posted. The balance and monthly report use the economic date.</p>}
-            {query.settled === "1" && <p className="account-success-message" role="status">Card settlement recorded. The selected account balance changed; spending totals did not.</p>}
+            {query.settled === "1" && <p className="account-success-message" role="status">Card settlement recorded. The selected account balance reflects it from the payment date; spending totals are unchanged.</p>}
             {query.corrected === "1" && <p className="account-success-message" role="status">Correction saved. The original remains in history as a voided event.</p>}
             {query.voided === "1" && <p className="account-success-message" role="status">Transaction voided. Its audit details remain in history.</p>}
 

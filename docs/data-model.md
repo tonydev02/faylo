@@ -83,7 +83,7 @@ For `credit_card`, `linked_account_id` is not treated as an automatic debit sour
 **Validation semantics:**
 - Income/expense from a funded method has one account entry (unless deliberately recorded as unassigned and surfaced for reconciliation).
 - Credit-card expense requires `payment_method.type = credit_card` and normally has **no account entry**.
-- `card_settlement` has one negative bank/cash entry, no category, and optional `payment_method_id` identifying which card was paid.
+- `card_settlement` has one negative bank/cash entry, no category, and requires an active, owner-owned credit-card payment method.
 - Transfer requires two account entries, one negative and one positive, matching each account's native currency; both legs retain exact actual amounts.
 - `balance_adjustment` has one entry and a mandatory reason, excluded from spending/income reports.
 - Never rely on global balance equality between the two foreign-currency transfer entries: amounts are in different units.

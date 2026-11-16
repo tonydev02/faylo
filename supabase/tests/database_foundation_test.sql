@@ -1422,6 +1422,67 @@ SELECT extensions.throws_ok(
   'a settlement rejects an amount currency that differs from the selected account'
 );
 
+SELECT extensions.throws_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000305', 'card_settlement',
+    (SELECT settlement_month FROM pg_temp.card_settlement_test_baseline), '100', 'JPY', NULL, NULL,
+    jsonb_build_array(jsonb_build_object(
+      'account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'),
+      'amount', '-100', 'currency_code', 'JPY'
+    ))
+  )$$,
+  '23514', NULL,
+  'a settlement rejects a missing payment method'
+);
+UPDATE public.payment_methods
+SET archived_at = pg_catalog.clock_timestamp()
+WHERE name = 'Credit Card';
+SELECT extensions.throws_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000306', 'card_settlement',
+    (SELECT settlement_month FROM pg_temp.card_settlement_test_baseline), '100', 'JPY', NULL,
+    (SELECT id FROM public.payment_methods WHERE name = 'Credit Card'),
+    jsonb_build_array(jsonb_build_object(
+      'account_id', (SELECT id::text FROM public.accounts WHERE name = 'Checking'),
+      'amount', '-100', 'currency_code', 'JPY'
+    ))
+  )$$,
+  '23503', NULL,
+  'a settlement rejects an archived credit-card payment method'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.void_transaction(
+    (SELECT id FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000301'),
+    'Synthetic settlement reversal'
+  )$$,
+  'a posted card settlement can be voided with an audit reason'
+);
+SELECT extensions.is(
+  (SELECT projection.balance::numeric - baseline.checking_balance
+   FROM public.account_balances_as_of(pg_catalog.statement_timestamp()) AS projection
+   CROSS JOIN pg_temp.card_settlement_test_baseline AS baseline
+   WHERE projection.name = 'Checking'),
+  0::numeric,
+  'voiding the settlement restores its funded-account balance effect'
+);
+SELECT extensions.is(
+  COALESCE((
+    SELECT total.total_amount::numeric
+    FROM public.transaction_totals((SELECT settlement_month FROM pg_temp.card_settlement_test_baseline)) AS total
+    WHERE total.transaction_kind = 'expense' AND total.currency_code = 'JPY'
+  ), 0) - (SELECT settlement_month_expenses FROM pg_temp.card_settlement_test_baseline),
+  0::numeric,
+  'voiding the settlement leaves settlement-month spending unchanged'
+);
+SELECT extensions.is(
+  COALESCE((
+    SELECT total.total_amount::numeric
+    FROM public.transaction_totals((SELECT purchase_month FROM pg_temp.card_settlement_test_baseline)) AS total
+    WHERE total.transaction_kind = 'expense' AND total.currency_code = 'JPY'
+  ), 0) - (SELECT purchase_month_expenses FROM pg_temp.card_settlement_test_baseline),
+  10000::numeric,
+  'voiding the settlement leaves the credit-card purchase in spending totals'
+);
 DELETE FROM public.user_preferences WHERE user_id = 'a1111111-1111-4111-8111-111111111111';
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.user_preferences WHERE user_id = auth.uid()),

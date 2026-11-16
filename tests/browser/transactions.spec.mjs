@@ -160,6 +160,9 @@ test("fresh-owner transaction flow, correction, void, balances, filters, and mob
   await page.goto("/transactions/new?kind=expense");
   await page.getByLabel("Amount").fill("10000");
   const cardDate = await page.getByLabel("Transaction date").inputValue();
+  const futureSettlementDate = new Date(`${cardDate}T00:00:00.000Z`);
+  futureSettlementDate.setUTCDate(futureSettlementDate.getUTCDate() + 1);
+  const futurePaymentDate = futureSettlementDate.toISOString().slice(0, 10);
   await page.getByLabel("Category").selectOption({ label: "Transit" });
   await page.getByLabel("Payment method and account").selectOption({ label: "Travel card · credit card" });
   await page.getByLabel(/Merchant or source/).fill("Card purchase");
@@ -179,18 +182,18 @@ test("fresh-owner transaction flow, correction, void, balances, filters, and mob
   await page.getByLabel("Settlement amount").fill("10000");
   await page.getByLabel("Credit card").selectOption({ label: "Travel card" });
   await page.getByLabel("Pay from funded account").selectOption({ label: "Browser cash account · cash · JPY" });
-  await page.getByLabel("Payment date").fill(cardDate);
+  await page.getByLabel("Payment date").fill(futurePaymentDate);
   await page.getByLabel(/Note/).fill("Card payment");
   await expect(page.getByText(/Faylo does not track outstanding card balances/)).toBeVisible();
   await capture(page, "issue-6-card-settlement-desktop.png");
   await page.getByRole("button", { name: "Record card settlement" }).click();
   await expect(page).toHaveURL(/\/transactions\/[0-9a-f-]+\?settled=1$/);
-  await expect(page.getByRole("status")).toContainText("Card settlement recorded.");
+  await expect(page.getByRole("status")).toHaveText("Card settlement recorded. The selected account balance reflects it from the payment date; spending totals are unchanged.");
   await expect(page.getByText("Paid from Browser cash account · one debit in JPY", { exact: true })).toBeVisible();
 
   await page.goto("/");
   await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByText("¥10,000", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥95,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥105,000", { exact: true })).toBeVisible();
   await page.goto("/transactions");
   await page.getByLabel("Search").fill("Travel card");
   await page.getByLabel("Type").selectOption("card_settlement");
