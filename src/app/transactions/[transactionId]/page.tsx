@@ -144,7 +144,6 @@ export default async function TransactionDetailPage({
                 <dl className="mt-5 space-y-3 text-[13px]">
                   <div className="flex items-start justify-between gap-4 border-b border-border pb-3"><dt className="text-muted">Category</dt><dd className="text-right font-medium text-ink">{record.kind === "card_settlement" || record.kind === "transfer" || record.kind === "balance_adjustment" ? "Not applicable · excluded from income and spending" : record.categoryName}</dd></div>
                   <div className="flex items-start justify-between gap-4 border-b border-border pb-3"><dt className="text-muted">Economic date</dt><dd className="text-right font-medium text-ink">{formatTransactionDate(record.occurredOn)}</dd></div>
-                  <div className="flex items-start justify-between gap-4 border-b border-border pb-3"><dt className="text-muted">Effective time · {timezone}</dt><dd className="text-right font-medium text-ink">{formatRecordingTime(record.occurredAt, timezone)}</dd></div>
                   <div className="flex items-start justify-between gap-4 border-b border-border pb-3"><dt className="text-muted">Recorded at · {timezone}</dt><dd className="text-right font-medium text-ink">{formatRecordingTime(record.recordedAt, timezone)}</dd></div>
                   <div className="flex items-start justify-between gap-4"><dt className="text-muted">Source</dt><dd className="text-right font-medium capitalize text-ink">{record.source}</dd></div>
                 </dl>

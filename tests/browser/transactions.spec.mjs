@@ -92,6 +92,9 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page.getByRole("heading", { name: "Lunch" })).toBeVisible();
   await expect(page.getByText("Original currency amount", { exact: true })).toBeVisible();
   await expect(page.getByText("−¥1,200", { exact: true })).toBeVisible();
+  await expect(page.getByText("Economic date", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Effective time ·/)).toHaveCount(0);
+  await expect(page.getByText(/^Recorded at ·/)).toBeVisible();
 
   await page.goto("/");
   const spending = page.getByRole("region", { name: "Spending this month by currency" });
@@ -291,6 +294,35 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await page.getByLabel("Status").selectOption("posted");
   await page.getByRole("button", { name: "Apply" }).click();
   await expect(page.getByRole("link", { name: /Balance adjustment/ })).toHaveCount(1);
+  await page.goto("/transactions/transfer");
+  await page.getByLabel("From account").selectOption({ label: "Browser cash account · cash · JPY" });
+  await page.getByLabel("To account").selectOption({ label: "Browser VND account · cash · VND" });
+  await page.getByLabel("Amount sent").fill("2500");
+  await page.getByLabel("Amount received").fill("450000");
+  await page.getByLabel("Economic date").fill(futurePaymentDate);
+  await page.getByRole("button", { name: "Review transfer" }).click();
+  await expect(page.getByRole("heading", { name: "Review transfer" })).toBeVisible();
+  await page.getByRole("button", { name: "Confirm and post transfer" }).click();
+  await expect(page).toHaveURL(/\/transactions\/[0-9a-f-]+\?transferred=1$/);
+  await expect(page.getByText(/^Effective time ·/)).toHaveCount(0);
+  await expect(page.getByText(/^Recorded at ·/)).toBeVisible();
+
+  await page.goto("/transactions/adjustment");
+  await page.getByLabel("Account", { exact: true }).selectOption({ label: "Browser VND account · cash · VND" });
+  await page.getByLabel("Signed amount").fill("350");
+  await page.getByLabel("Economic date").fill(futurePaymentDate);
+  await page.getByLabel("Why is the balance changing?").fill("Synthetic future-effective adjustment");
+  await page.getByRole("button", { name: "Review adjustment" }).click();
+  await expect(page.getByRole("heading", { name: "Review balance adjustment" })).toBeVisible();
+  await page.getByRole("button", { name: "Confirm and post adjustment" }).click();
+  await expect(page).toHaveURL(/\/transactions\/[0-9a-f-]+\?adjusted=1$/);
+
+  await page.goto("/");
+  await expect(page.getByRole("region", { name: "Income this month by currency" }).getByText("¥5,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByText("¥10,000", { exact: true })).toBeVisible();
+  const todayBalances = page.getByRole("region", { name: "Account balances" });
+  await expect(todayBalances.getByText("¥104,000", { exact: true })).toBeVisible();
+  await expect(todayBalances.getByText("₫180,100", { exact: true })).toBeVisible();
 
 
   const mobileContext = await browser.newContext({

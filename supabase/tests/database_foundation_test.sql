@@ -1714,6 +1714,157 @@ SELECT extensions.is(
   'transfer:voided:Synthetic transfer reversal:true',
   'voided transfer history preserves both event audit and reversal details'
 );
+INSERT INTO public.accounts (user_id, name, account_kind, currency_code, opening_balance, opening_as_of)
+VALUES
+  ('a1111111-1111-4111-8111-111111111111', 'Future movement source', 'bank', 'JPY', 100000, '2000-01-01'),
+  ('a1111111-1111-4111-8111-111111111111', 'Future movement destination', 'bank', 'JPY', 50000, '2000-01-01');
+CREATE TEMP TABLE future_account_movement_context AS
+WITH run_clock AS (
+  SELECT pg_catalog.transaction_timestamp() AS captured_at, preference.timezone
+  FROM public.user_preferences AS preference
+  WHERE preference.user_id = auth.uid()
+),
+date_context AS (
+  SELECT captured_at,
+         timezone,
+         (captured_at AT TIME ZONE timezone)::date + 1 AS occurred_on,
+         pg_catalog.date_trunc('month', captured_at AT TIME ZONE timezone)::date AS current_month
+  FROM run_clock
+)
+SELECT date_context.*,
+       pg_catalog.date_trunc('month', occurred_on::timestamp)::date AS future_month,
+       (SELECT balance::numeric FROM public.account_balances_as_of(captured_at)
+        WHERE name = 'Future movement source') AS source_balance_before,
+       (SELECT balance::numeric FROM public.account_balances_as_of(captured_at)
+        WHERE name = 'Future movement destination') AS destination_balance_before
+FROM date_context;
+CREATE TEMP TABLE future_movement_months AS
+SELECT DISTINCT month_start
+FROM (
+  SELECT current_month AS month_start FROM pg_temp.future_account_movement_context
+  UNION ALL
+  SELECT future_month FROM pg_temp.future_account_movement_context
+) AS report_months;
+CREATE TEMP TABLE future_movement_totals_before AS
+SELECT report_month.month_start,
+       totals.transaction_kind,
+       totals.currency_code,
+       totals.total_amount,
+       totals.transaction_count
+FROM pg_temp.future_movement_months AS report_month
+CROSS JOIN LATERAL public.transaction_totals(report_month.month_start) AS totals;
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000401', 'transfer',
+    (SELECT occurred_on FROM pg_temp.future_account_movement_context),
+    NULL, NULL, NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Future movement source'), 'amount', '-700', 'currency_code', 'JPY'),
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Future movement destination'), 'amount', '700', 'currency_code', 'JPY')
+    )
+  )$$,
+  'a tomorrow-dated transfer posts through the atomic RPC'
+);
+SELECT extensions.is(
+  (SELECT occurred_at::text FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000401'),
+  (SELECT (occurred_on::timestamp AT TIME ZONE timezone)::text FROM pg_temp.future_account_movement_context),
+  'a date-only future transfer uses local midnight as its economic instant'
+);
+SELECT extensions.is(
+  (SELECT balance FROM public.account_balances_as_of((SELECT captured_at FROM pg_temp.future_account_movement_context))
+   WHERE name = 'Future movement source'),
+  (SELECT source_balance_before::text FROM pg_temp.future_account_movement_context),
+  'posting a tomorrow-dated transfer leaves today source balance unchanged'
+);
+SELECT extensions.is(
+  (SELECT balance FROM public.account_balances_as_of((SELECT captured_at FROM pg_temp.future_account_movement_context))
+   WHERE name = 'Future movement destination'),
+  (SELECT destination_balance_before::text FROM pg_temp.future_account_movement_context),
+  'posting a tomorrow-dated transfer leaves today destination balance unchanged'
+);
+SELECT extensions.is(
+  (SELECT balance FROM public.account_balances_as_of(
+     (SELECT (occurred_on::timestamp AT TIME ZONE timezone) + INTERVAL '12 hours'
+      FROM pg_temp.future_account_movement_context))
+   WHERE name = 'Future movement source'),
+  (SELECT (source_balance_before - 700)::text FROM pg_temp.future_account_movement_context),
+  'the transfer debit applies when its economic date is reached'
+);
+SELECT extensions.is(
+  (SELECT balance FROM public.account_balances_as_of(
+     (SELECT (occurred_on::timestamp AT TIME ZONE timezone) + INTERVAL '12 hours'
+      FROM pg_temp.future_account_movement_context))
+   WHERE name = 'Future movement destination'),
+  (SELECT (destination_balance_before + 700)::text FROM pg_temp.future_account_movement_context),
+  'the transfer credit applies when its economic date is reached'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer
+   FROM (
+     (SELECT * FROM pg_temp.future_movement_totals_before
+      EXCEPT
+      SELECT report_month.month_start, totals.transaction_kind, totals.currency_code, totals.total_amount, totals.transaction_count
+      FROM pg_temp.future_movement_months AS report_month
+      CROSS JOIN LATERAL public.transaction_totals(report_month.month_start) AS totals)
+     UNION ALL
+     (SELECT report_month.month_start, totals.transaction_kind, totals.currency_code, totals.total_amount, totals.transaction_count
+      FROM pg_temp.future_movement_months AS report_month
+      CROSS JOIN LATERAL public.transaction_totals(report_month.month_start) AS totals
+      EXCEPT
+      SELECT * FROM pg_temp.future_movement_totals_before)
+   ) AS differences),
+  0,
+  'a future-effective transfer leaves income and spending totals unchanged'
+);
+SELECT extensions.lives_ok(
+  $$SELECT public.post_transaction(
+    'c0000000-0000-4000-8000-000000000402', 'balance_adjustment',
+    (SELECT occurred_on FROM pg_temp.future_account_movement_context),
+    '250', 'JPY', NULL, NULL,
+    jsonb_build_array(
+      jsonb_build_object('account_id', (SELECT id::text FROM public.accounts WHERE name = 'Future movement source'), 'amount', '250', 'currency_code', 'JPY')
+    ),
+    'manual', NULL, NULL, 'Synthetic future-effective balance correction'
+  )$$,
+  'a tomorrow-dated balance adjustment posts through the atomic RPC'
+);
+SELECT extensions.is(
+  (SELECT occurred_at::text FROM public.transactions WHERE idempotency_key = 'c0000000-0000-4000-8000-000000000402'),
+  (SELECT (occurred_on::timestamp AT TIME ZONE timezone)::text FROM pg_temp.future_account_movement_context),
+  'a date-only future adjustment uses local midnight as its economic instant'
+);
+SELECT extensions.is(
+  (SELECT balance FROM public.account_balances_as_of((SELECT captured_at FROM pg_temp.future_account_movement_context))
+   WHERE name = 'Future movement source'),
+  (SELECT source_balance_before::text FROM pg_temp.future_account_movement_context),
+  'posting a tomorrow-dated adjustment leaves today source balance unchanged'
+);
+SELECT extensions.is(
+  (SELECT balance FROM public.account_balances_as_of(
+     (SELECT (occurred_on::timestamp AT TIME ZONE timezone) + INTERVAL '12 hours'
+      FROM pg_temp.future_account_movement_context))
+   WHERE name = 'Future movement source'),
+  (SELECT (source_balance_before - 450)::text FROM pg_temp.future_account_movement_context),
+  'the future transfer and adjustment both apply on their economic date'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer
+   FROM (
+     (SELECT * FROM pg_temp.future_movement_totals_before
+      EXCEPT
+      SELECT report_month.month_start, totals.transaction_kind, totals.currency_code, totals.total_amount, totals.transaction_count
+      FROM pg_temp.future_movement_months AS report_month
+      CROSS JOIN LATERAL public.transaction_totals(report_month.month_start) AS totals)
+     UNION ALL
+     (SELECT report_month.month_start, totals.transaction_kind, totals.currency_code, totals.total_amount, totals.transaction_count
+      FROM pg_temp.future_movement_months AS report_month
+      CROSS JOIN LATERAL public.transaction_totals(report_month.month_start) AS totals
+      EXCEPT
+      SELECT * FROM pg_temp.future_movement_totals_before)
+   ) AS differences),
+  0,
+  'a future-effective balance adjustment leaves income and spending totals unchanged'
+);
 DELETE FROM public.user_preferences WHERE user_id = 'a1111111-1111-4111-8111-111111111111';
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.user_preferences WHERE user_id = auth.uid()),
