@@ -20,7 +20,7 @@ export default async function TransactionDetailPage({
   searchParams,
 }: {
   params: Promise<{ transactionId: string }>;
-  searchParams: Promise<{ created?: string; corrected?: string; voided?: string }>;
+  searchParams: Promise<{ created?: string; settled?: string; corrected?: string; voided?: string }>;
 }) {
   const owner = await requireOwner();
   const [{ transactionId }, query] = await Promise.all([params, searchParams]);
@@ -44,17 +44,18 @@ export default async function TransactionDetailPage({
           <>
             <header className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
               <div className="min-w-0">
-                <p className="text-[13px] font-medium text-muted">{record.kind === "expense" ? "Expense" : "Income"} · {record.categoryName}</p>
+                <p className="text-[13px] font-medium text-muted">{record.kind === "card_settlement" ? `Card settlement · ${record.paymentMethodName ?? "credit card"}` : `${record.kind === "expense" ? "Expense" : "Income"} · ${record.categoryName}`}</p>
                 <h1 className="mt-2 break-words text-[34px] font-medium leading-tight tracking-[-0.05em] text-ink sm:text-[42px]">{record.merchant ?? record.categoryName}</h1>
                 <p className="mt-3 text-[13px] text-muted">{formatTransactionDate(record.occurredOn)}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className={record.status === "posted" ? "rounded-full border border-forest/70 bg-forest/25 px-3 py-1.5 text-[12px] font-medium text-mint" : "rounded-full border border-border bg-raised px-3 py-1.5 text-[12px] font-medium text-muted"}>{record.status === "posted" ? "Posted" : record.correctedByTransactionId ? "Voided · corrected" : "Voided"}</span>
-                {record.status === "posted" && <Link className="inline-flex min-h-11 items-center justify-center rounded-xl border border-border bg-surface px-4 text-[13px] font-medium text-ink hover:bg-raised" href={`/transactions/${record.id}/edit`}>Edit transaction</Link>}
+                {record.status === "posted" && record.kind !== "card_settlement" && <Link className="inline-flex min-h-11 items-center justify-center rounded-xl border border-border bg-surface px-4 text-[13px] font-medium text-ink hover:bg-raised" href={`/transactions/${record.id}/edit`}>Edit transaction</Link>}
               </div>
             </header>
 
             {query.created === "1" && <p className="account-success-message" role="status">Transaction posted. The balance and monthly report use the economic date.</p>}
+            {query.settled === "1" && <p className="account-success-message" role="status">Card settlement recorded. The selected account balance reflects it from the payment date; spending totals are unchanged.</p>}
             {query.corrected === "1" && <p className="account-success-message" role="status">Correction saved. The original remains in history as a voided event.</p>}
             {query.voided === "1" && <p className="account-success-message" role="status">Transaction voided. Its audit details remain in history.</p>}
 
@@ -69,7 +70,13 @@ export default async function TransactionDetailPage({
             <div className="grid gap-4 lg:grid-cols-2">
               <section aria-labelledby="funding-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-6">
                 <h2 className="text-[17px] font-medium tracking-[-0.02em] text-ink" id="funding-title">Payment and account movement</h2>
-                {record.fundingStatus === "funded" ? (
+                {record.kind === "card_settlement" ? (
+                  <>
+                    <p className="mt-5 text-[15px] font-medium text-ink">{record.paymentMethodName ?? "Credit card"}</p>
+                    <p className="mt-1 text-[13px] text-muted">Paid from {record.fundingAccountName ?? "tracked account"} · one debit in {record.currencyCode}</p>
+                    <p className="mt-4 text-[13px] leading-5 text-muted">This settlement reduces the selected account and is excluded from income and spending. Faylo does not track outstanding credit-card balances.</p>
+                  </>
+                ) : record.fundingStatus === "funded" ? (
                   <>
                     <p className="mt-5 text-[15px] font-medium text-ink">{record.fundingAccountName ?? "Tracked account"}</p>
                     <p className="mt-1 text-[13px] text-muted">{record.paymentMethodName ?? "Payment method"} · one account entry in {record.currencyCode}</p>
@@ -92,7 +99,7 @@ export default async function TransactionDetailPage({
               <section aria-labelledby="transaction-details-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-6">
                 <h2 className="text-[17px] font-medium tracking-[-0.02em] text-ink" id="transaction-details-title">Transaction details</h2>
                 <dl className="mt-5 space-y-3 text-[13px]">
-                  <div className="flex items-start justify-between gap-4 border-b border-border pb-3"><dt className="text-muted">Category</dt><dd className="text-right font-medium text-ink">{record.categoryName}</dd></div>
+                  <div className="flex items-start justify-between gap-4 border-b border-border pb-3"><dt className="text-muted">Category</dt><dd className="text-right font-medium text-ink">{record.kind === "card_settlement" ? "Not applicable · excluded from spending" : record.categoryName}</dd></div>
                   <div className="flex items-start justify-between gap-4 border-b border-border pb-3"><dt className="text-muted">Economic date</dt><dd className="text-right font-medium text-ink">{formatTransactionDate(record.occurredOn)}</dd></div>
                   <div className="flex items-start justify-between gap-4"><dt className="text-muted">Recorded at</dt><dd className="text-right font-medium text-ink">{formatRecordingTime(record.recordedAt)}</dd></div>
                 </dl>

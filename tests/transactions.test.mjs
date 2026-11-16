@@ -3,6 +3,7 @@ import test from "node:test";
 import { formatTransactionAmount, formatTransactionDate, dateInTimezone } from "../src/lib/transactions/presentation.ts";
 import {
   validateCategoryInput,
+  validateCardSettlementInput,
   validatePaymentMethodInput,
   validateTransactionInput,
   validateVoidReason,
@@ -21,6 +22,19 @@ function validTransaction(overrides = {}) {
     paymentMethodId: null,
     merchant: "Cafe",
     note: null,
+    idempotencyKey: key,
+    ...overrides,
+  };
+}
+
+function validSettlement(overrides = {}) {
+  return {
+    amount: "10000",
+    currencyCode: "JPY",
+    occurredOn: "2026-11-01",
+    paymentMethodId: id,
+    accountId: "c3333333-3333-4333-8333-333333333333",
+    note: "  October card bill  ",
     idempotencyKey: key,
     ...overrides,
   };
@@ -45,6 +59,28 @@ test("JPY/VND whole-unit and USD cent precision are enforced", () => {
   const usd = validateTransactionInput(validTransaction({ currencyCode: "USD", amount: "1.001" }));
   assert.equal(usd.ok, false);
   if (!usd.ok) assert.match(usd.errors.amount ?? "", /at most 2 decimal places/);
+});
+
+test("card settlement validation preserves exact amounts and rejects invalid date, currency, and references", () => {
+  const valid = validateCardSettlementInput(validSettlement());
+  assert.equal(valid.ok, true);
+  if (valid.ok) {
+    assert.equal(valid.value.amount, "10000");
+    assert.equal(valid.value.note, "October card bill");
+  }
+
+  const exactUsd = validateCardSettlementInput(validSettlement({ currencyCode: "USD", amount: "9007199254740993.45" }));
+  assert.equal(exactUsd.ok, true);
+  if (exactUsd.ok) assert.equal(exactUsd.value.amount, "9007199254740993.45");
+
+  for (const amount of ["", "0", "0.00", "1e3", "1,000", "01", "-1", "1.001"]) {
+    assert.equal(validateCardSettlementInput(validSettlement({ amount, currencyCode: "USD" })).ok, false, amount);
+  }
+  assert.equal(validateCardSettlementInput(validSettlement({ currencyCode: "JPY", amount: "1.5" })).ok, false);
+  assert.equal(validateCardSettlementInput(validSettlement({ occurredOn: "2026-02-30" })).ok, false);
+  assert.equal(validateCardSettlementInput(validSettlement({ paymentMethodId: "not-a-uuid" })).ok, false);
+  assert.equal(validateCardSettlementInput(validSettlement({ accountId: "not-a-uuid" })).ok, false);
+  assert.equal(validateCardSettlementInput(validSettlement({ currencyCode: "ZZZ" })).ok, false);
 });
 
 test("transaction form rejects non-decimal, zero, malformed date, and invalid identifiers", () => {
@@ -80,6 +116,7 @@ test("categories keep their optional parent id and reject malformed parent ids",
 test("transaction presentation formats exact values with economic sign and date-only semantics", () => {
   assert.equal(formatTransactionAmount("1200", "JPY", "expense"), "−¥1,200");
   assert.equal(formatTransactionAmount("1.23", "USD", "income"), "+$1.23");
+  assert.equal(formatTransactionAmount("10000", "JPY", "card_settlement"), "−¥10,000");
   assert.equal(formatTransactionDate("2026-11-10"), "Nov 10, 2026");
   assert.equal(dateInTimezone(new Date("2026-11-10T00:30:00.000Z"), "Asia/Tokyo"), "2026-11-10");
   assert.equal(dateInTimezone(new Date("2026-11-10T00:30:00.000Z"), "America/Los_Angeles"), "2026-11-09");

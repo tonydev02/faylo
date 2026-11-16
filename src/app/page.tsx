@@ -84,7 +84,7 @@ export default async function HomePage() {
 
           <section aria-labelledby="recent-activity-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-7">
             <div className="flex items-start justify-between gap-4">
-              <div><p className="text-[12px] font-medium text-muted">Income and expenses</p><h2 className="mt-2 text-[18px] font-medium tracking-[-0.035em] text-ink" id="recent-activity-title">Recent activity</h2></div>
+              <div><p className="text-[12px] font-medium text-muted">Recent posted activity</p><h2 className="mt-2 text-[18px] font-medium tracking-[-0.035em] text-ink" id="recent-activity-title">Recent activity</h2></div>
               <Link className="inline-flex min-h-11 items-center text-[13px] font-medium text-mint underline underline-offset-4" href="/transactions">See history</Link>
             </div>
             {!historyResult.ok ? (
@@ -101,7 +101,7 @@ export default async function HomePage() {
 
         <footer className="flex flex-col gap-2 border-t border-border pt-5 text-[12px] text-muted sm:flex-row sm:items-center sm:justify-between">
           <span>Faylo private workspace</span>
-          <span>Credit-card expenses do not track card debt; unassigned activity is marked for reconciliation.</span>
+          <span>Card settlements reduce cash, not spending. Outstanding card balances and statements are not tracked; tracked assets can overstate net worth.</span>
         </footer>
       </div>
     </AppShell>

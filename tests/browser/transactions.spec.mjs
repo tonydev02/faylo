@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 import { AUTH_STATE_PATH } from "./constants.mjs";
 
 async function capture(page, filename, fullPage = true) {
-  const outputDirectory = process.env.SAVE_BROWSER_SCREENSHOTS === "1" ? "docs/screenshots" : "test-results";
+  const outputDirectory = filename.startsWith("issue-6-") && process.env.SAVE_BROWSER_SCREENSHOTS === "1" ? "docs/screenshots" : "test-results";
   const outputPath = path.resolve(process.cwd(), outputDirectory, filename);
   await mkdir(path.dirname(outputPath), { recursive: true });
   await page.screenshot({ fullPage, path: outputPath });
@@ -149,6 +149,58 @@ test("fresh-owner transaction flow, correction, void, balances, filters, and mob
   await expect(page.getByRole("link", { name: /Lunch/ })).toHaveCount(2);
   await expect(page.getByRole("link", { name: /Lunch Food .*Voided · corrected/ })).toBeVisible();
   await capture(page, "issue-5-transactions-desktop.png");
+  await page.goto("/transactions/categories");
+  await page.getByLabel("Method type").selectOption("credit_card");
+  await page.getByLabel("Method name").fill("Travel card");
+  await expect(page.getByLabel("Linked bank or cash account")).toBeDisabled();
+  await page.getByRole("button", { name: "Add payment method" }).click();
+  await expect(page).toHaveURL(/methodCreated=1$/);
+  await expect(page.getByText("Travel card", { exact: true })).toBeVisible();
+
+  await page.goto("/transactions/new?kind=expense");
+  await page.getByLabel("Amount").fill("10000");
+  const cardDate = await page.getByLabel("Transaction date").inputValue();
+  const futureSettlementDate = new Date(`${cardDate}T00:00:00.000Z`);
+  futureSettlementDate.setUTCDate(futureSettlementDate.getUTCDate() + 1);
+  const futurePaymentDate = futureSettlementDate.toISOString().slice(0, 10);
+  await page.getByLabel("Category").selectOption({ label: "Transit" });
+  await page.getByLabel("Payment method and account").selectOption({ label: "Travel card · credit card" });
+  await page.getByLabel(/Merchant or source/).fill("Card purchase");
+  await page.getByRole("button", { name: "Save transaction" }).click();
+  await expect(page).toHaveURL(/\/transactions\/[0-9a-f-]+\?created=1$/);
+  await expect(page.getByText("−¥10,000", { exact: true })).toBeVisible();
+  await expect(page.getByText("Credit-card expense · no account movement", { exact: true })).toBeVisible();
+
+  await page.goto("/");
+  const cardSpending = page.getByRole("region", { name: "Spending this month by currency" });
+  await expect(cardSpending.getByText("JPY · 1 event", { exact: true })).toBeVisible();
+  await expect(cardSpending.getByText("¥10,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥105,000", { exact: true })).toBeVisible();
+
+  await page.goto("/transactions/settlement");
+  await expect(page.getByRole("heading", { name: "Settle a credit card" })).toBeVisible();
+  await page.getByLabel("Settlement amount").fill("10000");
+  await page.getByLabel("Credit card").selectOption({ label: "Travel card" });
+  await page.getByLabel("Pay from funded account").selectOption({ label: "Browser cash account · cash · JPY" });
+  await page.getByLabel("Payment date").fill(futurePaymentDate);
+  await page.getByLabel(/Note/).fill("Card payment");
+  await expect(page.getByText(/Faylo does not track outstanding card balances/)).toBeVisible();
+  await capture(page, "issue-6-card-settlement-desktop.png");
+  await page.getByRole("button", { name: "Record card settlement" }).click();
+  await expect(page).toHaveURL(/\/transactions\/[0-9a-f-]+\?settled=1$/);
+  await expect(page.getByRole("status")).toHaveText("Card settlement recorded. The selected account balance reflects it from the payment date; spending totals are unchanged.");
+  await expect(page.getByText("Paid from Browser cash account · one debit in JPY", { exact: true })).toBeVisible();
+
+  await page.goto("/");
+  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByText("¥10,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥105,000", { exact: true })).toBeVisible();
+  await page.goto("/transactions");
+  await page.getByLabel("Search").fill("Travel card");
+  await page.getByLabel("Type").selectOption("card_settlement");
+  await page.getByLabel("Status").selectOption("posted");
+  await page.getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByRole("link", { name: /Card settlement/ })).toHaveCount(1);
+
 
   const mobileContext = await browser.newContext({
     viewport: { width: 390, height: 844 },
@@ -174,5 +226,17 @@ test("fresh-owner transaction flow, correction, void, balances, filters, and mob
   await mobile.getByLabel("Search").fill("no matching synthetic transaction");
   await mobile.getByRole("button", { name: "Apply" }).click();
   await expect(mobile.getByRole("heading", { name: "No matching transactions" })).toBeVisible();
+  await mobile.goto("/transactions/settlement");
+  await mobile.getByLabel("Settlement amount").fill("10000");
+  await mobile.getByLabel("Credit card").selectOption({ label: "Travel card" });
+  await mobile.getByLabel("Pay from funded account").selectOption({ label: "Browser cash account · cash · JPY" });
+  await mobile.getByLabel("Payment date").fill(cardDate);
+  await mobile.getByLabel(/Note/).fill("Card payment");
+  await expect(mobile.getByText(/Faylo does not track outstanding card balances/)).toBeVisible();
+  const settlementDimensions = await mobile.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, viewportWidth: window.innerWidth }));
+  assert.ok(settlementDimensions.scrollWidth <= settlementDimensions.viewportWidth, `mobile settlement layout overflows by ${settlementDimensions.scrollWidth - settlementDimensions.viewportWidth}px`);
+  await mobile.setViewportSize({ width: 390, height: 1600 });
+  await mobile.evaluate(() => window.scrollTo(0, 0));
+  await capture(mobile, "issue-6-card-settlement-mobile.png", false);
   await mobileContext.close();
 });

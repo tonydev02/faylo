@@ -1,8 +1,8 @@
 import { formatMoney } from "../accounts/money.ts";
-import type { TransactionKind } from "./validation";
+import type { TransactionEventKind } from "./validation";
 
-export function formatTransactionAmount(amount: string, currencyCode: string, kind: TransactionKind): string {
-  return `${kind === "expense" ? "−" : "+"}${formatMoney(amount, currencyCode)}`;
+export function formatTransactionAmount(amount: string, currencyCode: string, kind: TransactionEventKind): string {
+  return `${kind === "income" ? "+" : "−"}${formatMoney(amount, currencyCode)}`;
 }
 
 export function formatTransactionDate(value: string): string {

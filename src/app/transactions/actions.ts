@@ -9,17 +9,21 @@ import {
   correctTransaction,
   createCategory,
   createPaymentMethod,
+  postCardSettlement,
   postTransaction,
   renameCategory,
   renamePaymentMethod,
   voidTransaction,
 } from "@/lib/transactions/repository";
 import {
+  validateCardSettlementInput,
   validateCategoryInput,
   validatePaymentMethodInput,
   validateTransactionId,
   validateTransactionInput,
   validateVoidReason,
+  type CardSettlementField,
+  type CardSettlementFormState,
   type CategoryFormState,
   type PaymentMethodFormState,
   type TransactionFormState,
@@ -60,6 +64,34 @@ export async function createTransactionAction(_previous: TransactionFormState, f
   revalidatePath("/transactions");
   revalidatePath(`/transactions/${result.value}`);
   redirect(`/transactions/${result.value}?created=1`);
+}
+
+export async function recordCardSettlementAction(_previous: CardSettlementFormState, formData: FormData): Promise<CardSettlementFormState> {
+  const owner = await requireOwner();
+  const validation = validateCardSettlementInput({
+    amount: stringField(formData, "amount"),
+    currencyCode: stringField(formData, "currencyCode"),
+    occurredOn: stringField(formData, "occurredOn"),
+    paymentMethodId: stringField(formData, "paymentMethodId"),
+    accountId: stringField(formData, "accountId"),
+    note: stringField(formData, "note"),
+    idempotencyKey: stringField(formData, "idempotencyKey"),
+  });
+  if (!validation.ok) return { message: "Review the highlighted settlement details.", errors: validation.errors };
+
+  const result = await postCardSettlement(owner.id, validation.value);
+  if (!result.ok) {
+    const field = result.field as CardSettlementField | undefined;
+    return {
+      message: result.kind === "unavailable" ? "Settlement storage is unavailable. Try again." : result.message ?? "The card settlement could not be saved.",
+      errors: field ? { [field]: result.message ?? "Check this field and try again." } : undefined,
+    };
+  }
+  revalidatePath("/");
+  revalidatePath("/transactions");
+  revalidatePath("/transactions/settlement");
+  revalidatePath(`/transactions/${result.value}`);
+  redirect(`/transactions/${result.value}?settled=1`);
 }
 
 export async function correctTransactionAction(_previous: TransactionFormState, formData: FormData): Promise<TransactionFormState> {
@@ -155,6 +187,7 @@ export async function createPaymentMethodAction(_previous: PaymentMethodFormStat
   if (!result.ok) return { message: result.message ?? "Choose an active bank or cash account for this method." };
   revalidatePath("/transactions");
   revalidatePath("/transactions/new");
+  revalidatePath("/transactions/settlement");
   revalidatePath("/transactions/categories");
   redirect("/transactions/categories?methodCreated=1");
 }
@@ -169,6 +202,7 @@ export async function renamePaymentMethodAction(_previous: PaymentMethodFormStat
   if (!result.ok) return { message: result.kind === "not-found" ? "This payment method is archived or unavailable." : "The payment method name could not be saved." };
   revalidatePath("/transactions");
   revalidatePath("/transactions/new");
+  revalidatePath("/transactions/settlement");
   revalidatePath("/transactions/categories");
   redirect("/transactions/categories?methodSaved=1");
 }
@@ -182,6 +216,7 @@ export async function archivePaymentMethodAction(_previous: PaymentMethodFormSta
   if (!result.ok) return { message: result.kind === "not-found" ? "This payment method is archived or unavailable." : "The payment method could not be archived." };
   revalidatePath("/transactions");
   revalidatePath("/transactions/new");
+  revalidatePath("/transactions/settlement");
   revalidatePath("/transactions/categories");
   redirect("/transactions/categories?methodArchived=1");
 }

@@ -2,11 +2,18 @@ import "server-only";
 
 import { listAccounts, type TrackedAccount } from "@/lib/accounts/repository";
 import { createSupabaseServerClient } from "@/lib/auth/server";
-import type { PaymentMethodKind, TransactionKind, TransactionStatus } from "./validation";
+import type {
+  CardSettlementInput,
+  PaymentMethodKind,
+  TransactionEventKind,
+  TransactionKind,
+  TransactionStatus,
+} from "./validation";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL_PATTERN = /^(0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
 const TRANSACTION_KINDS: Record<TransactionKind, true> = { income: true, expense: true };
+const TRANSACTION_EVENT_KINDS: Record<TransactionEventKind, true> = { income: true, expense: true, card_settlement: true };
 const PAYMENT_METHOD_KINDS: Record<PaymentMethodKind, true> = {
   cash: true,
   debit_card: true,
@@ -39,12 +46,12 @@ export type TransactionPaymentMethod = {
 
 export type TransactionRecord = {
   id: string;
-  kind: TransactionKind;
+  kind: TransactionEventKind;
   occurredAt: string;
   occurredOn: string;
   amount: string;
   currencyCode: string;
-  categoryId: string;
+  categoryId: string | null;
   categoryName: string;
   paymentMethodId: string | null;
   paymentMethodName: string | null;
@@ -66,7 +73,7 @@ export type TransactionRecord = {
 
 export type TransactionFilters = {
   search: string;
-  kind: TransactionKind | "all";
+  kind: TransactionEventKind | "all";
   status: TransactionStatus | "all";
   occurredFrom: string;
   occurredThrough: string;
@@ -95,13 +102,13 @@ export type TransactionSetup = {
 
 type RawTransaction = {
   transaction_id: string;
-  transaction_kind: TransactionKind;
+  transaction_kind: TransactionEventKind;
   occurred_at: string;
   occurred_on: string;
   amount: string;
   currency_code: string;
-  category_id: string;
-  category_name: string;
+  category_id: string | null;
+  category_name: string | null;
   payment_method_id: string | null;
   payment_method_name: string | null;
   payment_method_kind: PaymentMethodKind | null;
@@ -126,13 +133,13 @@ function isRawTransaction(value: unknown): value is RawTransaction {
   const isNullableString = (item: unknown) => item === null || typeof item === "string";
   const isNullableUuid = (item: unknown) => item === null || (typeof item === "string" && UUID_PATTERN.test(item));
   return typeof row.transaction_id === "string" && UUID_PATTERN.test(row.transaction_id)
-    && typeof row.transaction_kind === "string" && Object.hasOwn(TRANSACTION_KINDS, row.transaction_kind)
+    && typeof row.transaction_kind === "string" && Object.hasOwn(TRANSACTION_EVENT_KINDS, row.transaction_kind)
     && typeof row.occurred_at === "string"
     && typeof row.occurred_on === "string"
     && typeof row.amount === "string" && DECIMAL_PATTERN.test(row.amount)
     && typeof row.currency_code === "string" && /^[A-Z]{3}$/.test(row.currency_code)
-    && typeof row.category_id === "string" && UUID_PATTERN.test(row.category_id)
-    && typeof row.category_name === "string"
+    && (row.category_id === null || (typeof row.category_id === "string" && UUID_PATTERN.test(row.category_id)))
+    && (row.category_name === null || typeof row.category_name === "string")
     && isNullableUuid(row.payment_method_id)
     && isNullableString(row.payment_method_name)
     && (row.payment_method_kind === null || (typeof row.payment_method_kind === "string" && Object.hasOwn(PAYMENT_METHOD_KINDS, row.payment_method_kind)))
@@ -160,7 +167,7 @@ function mapTransaction(row: RawTransaction): TransactionRecord {
     amount: row.amount,
     currencyCode: row.currency_code,
     categoryId: row.category_id,
-    categoryName: row.category_name,
+    categoryName: row.category_name ?? "Card settlement",
     paymentMethodId: row.payment_method_id,
     paymentMethodName: row.payment_method_name,
     paymentMethodKind: row.payment_method_kind,
@@ -391,6 +398,81 @@ export async function postTransaction(ownerId: string, input: {
       p_occurred_at: null,
     });
     if (error || typeof data !== "string" || !UUID_PATTERN.test(data)) return { ok: false, kind: "rejected", ...failureField(error ?? {}) };
+    return { ok: true, value: data };
+  } catch {
+    return { ok: false, kind: "unavailable" };
+  }
+}
+
+function cardSettlementFailure(error: { message?: string }): { field?: string; message: string } {
+  const message = error.message?.toLowerCase() ?? "";
+  if (message.includes("idempotency key")) return { message: "This submission key was already used for different settlement details. Reload the page and try again." };
+  if (message.includes("currency")) return { field: "currencyCode", message: "The settlement currency must match the selected account." };
+  if (message.includes("amount") || message.includes("fractional scale")) return { field: "amount", message: "Check the settlement amount and currency precision, then try again." };
+  if (message.includes("opening balance") || message.includes("predates") || message.includes("local occurrence date")) return { field: "occurredOn", message: "The settlement date is outside the account's tracking period." };
+  if (message.includes("payment method") || message.includes("credit-card")) return { field: "paymentMethodId", message: "Choose an active credit card payment method." };
+  if (message.includes("account")) return { field: "accountId", message: "Choose an active bank or cash account." };
+  return { message: "The card settlement could not be saved. Check the card, account, amount, and date." };
+}
+
+export async function postCardSettlement(ownerId: string, input: CardSettlementInput): Promise<ServiceResult<string>> {
+  if (!UUID_PATTERN.test(ownerId)
+    || !UUID_PATTERN.test(input.idempotencyKey)
+    || !UUID_PATTERN.test(input.paymentMethodId)
+    || !UUID_PATTERN.test(input.accountId)) {
+    return { ok: false, kind: "rejected" };
+  }
+
+  try {
+    const supabase = await createSupabaseServerClient();
+    const [methodResult, accountResult] = await Promise.all([
+      supabase.from("payment_methods")
+        .select("id,method_kind,linked_account_id,archived_at")
+        .eq("user_id", ownerId)
+        .eq("id", input.paymentMethodId)
+        .maybeSingle(),
+      supabase.from("accounts")
+        .select("id,account_kind,currency_code,status")
+        .eq("user_id", ownerId)
+        .eq("id", input.accountId)
+        .maybeSingle(),
+    ]);
+    const method = methodResult.data;
+    if (methodResult.error || !method || method.archived_at !== null
+      || method.method_kind !== "credit_card" || method.linked_account_id !== null) {
+      return { ok: false, kind: "rejected", field: "paymentMethodId", message: "Choose an active credit card payment method." };
+    }
+    const account = accountResult.data;
+    if (accountResult.error || !account || account.status !== "active"
+      || (account.account_kind !== "bank" && account.account_kind !== "cash")) {
+      return { ok: false, kind: "rejected", field: "accountId", message: "Choose an active bank or cash account." };
+    }
+    if (account.currency_code !== input.currencyCode) {
+      return { ok: false, kind: "rejected", field: "currencyCode", message: `This account uses ${account.currency_code}. Its currency must match the settlement.` };
+    }
+
+    const { data, error } = await supabase.rpc("post_transaction", {
+      p_idempotency_key: input.idempotencyKey,
+      p_transaction_kind: "card_settlement",
+      p_occurred_on: input.occurredOn,
+      p_amount: input.amount,
+      p_currency_code: input.currencyCode,
+      p_category_id: null,
+      p_payment_method_id: input.paymentMethodId,
+      p_entries: [{
+        account_id: input.accountId,
+        amount: `-${input.amount}`,
+        currency_code: input.currencyCode,
+      }],
+      p_source: "manual",
+      p_merchant: null,
+      p_note: input.note,
+      p_adjustment_reason: null,
+      p_occurred_at: null,
+    });
+    if (error || typeof data !== "string" || !UUID_PATTERN.test(data)) {
+      return { ok: false, kind: "rejected", ...cardSettlementFailure(error ?? {}) };
+    }
     return { ok: true, value: data };
   } catch {
     return { ok: false, kind: "unavailable" };
