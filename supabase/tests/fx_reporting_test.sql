@@ -28,7 +28,8 @@ CREATE TEMP TABLE fx_reporting_baseline (
   unresolved_transaction_count bigint NOT NULL,
   included_transaction_count bigint NOT NULL
 );
-GRANT SELECT, INSERT ON TABLE pg_temp.fx_test_transactions, pg_temp.fx_test_snapshots, pg_temp.fx_reporting_baseline, pg_temp.fx_reporting_context TO authenticated;
+CREATE TEMP TABLE fx_void_snapshot_baseline (label text PRIMARY KEY, history jsonb NOT NULL);
+GRANT SELECT, INSERT ON TABLE pg_temp.fx_test_transactions, pg_temp.fx_test_snapshots, pg_temp.fx_reporting_baseline, pg_temp.fx_void_snapshot_baseline, pg_temp.fx_reporting_context TO authenticated;
 
 INSERT INTO auth.users (id, aud, role, email, created_at, updated_at)
 VALUES
@@ -228,6 +229,61 @@ SELECT extensions.is(
    WHERE transaction_kind = 'expense' AND currency_code = 'USD'),
   1::bigint,
   'incomplete reporting counts every included unresolved conversion'
+);
+
+INSERT INTO pg_temp.fx_test_transactions
+SELECT 'rounding_expense_a', public.post_transaction(
+  'd0000000-0000-4000-8000-000000000070', 'expense', (SELECT today FROM pg_temp.fx_reporting_context),
+  '0.01', 'USD', (SELECT id FROM public.categories WHERE user_id = auth.uid() AND name = 'Synthetic FX expense'),
+  NULL, '[]'::jsonb
+);
+INSERT INTO pg_temp.fx_test_transactions
+SELECT 'rounding_expense_b', public.post_transaction(
+  'd0000000-0000-4000-8000-000000000071', 'expense', (SELECT today FROM pg_temp.fx_reporting_context),
+  '0.01', 'USD', (SELECT id FROM public.categories WHERE user_id = auth.uid() AND name = 'Synthetic FX expense'),
+  NULL, '[]'::jsonb
+);
+INSERT INTO pg_temp.fx_test_snapshots
+SELECT 'rounding_expense_a', public.record_transaction_reporting_fx_snapshot(
+  (SELECT transaction_id FROM pg_temp.fx_test_transactions WHERE label = 'rounding_expense_a'),
+  'e0000000-0000-4000-8000-000000000070', 'resolved', 150.5, 'frankfurter_blended', 'frankfurter',
+  (SELECT today FROM pg_temp.fx_reporting_context), pg_catalog.statement_timestamp(),
+  '{"providers":["ECB"]}'::jsonb, NULL,
+  pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+    'effective_on', (SELECT today::text FROM pg_temp.fx_reporting_context),
+    'rate', '150.5', 'providers', pg_catalog.jsonb_build_array('ECB')
+  )),
+  (SELECT today - 7 FROM pg_temp.fx_reporting_context),
+  (SELECT today FROM pg_temp.fx_reporting_context)
+);
+INSERT INTO pg_temp.fx_test_snapshots
+SELECT 'rounding_expense_b', public.record_transaction_reporting_fx_snapshot(
+  (SELECT transaction_id FROM pg_temp.fx_test_transactions WHERE label = 'rounding_expense_b'),
+  'e0000000-0000-4000-8000-000000000071', 'resolved', 150.5, 'frankfurter_blended', 'frankfurter',
+  (SELECT today FROM pg_temp.fx_reporting_context), pg_catalog.statement_timestamp(),
+  '{"providers":["ECB"]}'::jsonb, NULL,
+  pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+    'effective_on', (SELECT today::text FROM pg_temp.fx_reporting_context),
+    'rate', '150.5', 'providers', pg_catalog.jsonb_build_array('ECB')
+  )),
+  (SELECT today - 7 FROM pg_temp.fx_reporting_context),
+  (SELECT today FROM pg_temp.fx_reporting_context)
+);
+SELECT extensions.is(
+  (SELECT resolved_total_jpy FROM public.transaction_totals((SELECT current_month FROM pg_temp.fx_reporting_context))
+   WHERE transaction_kind = 'expense' AND currency_code = 'USD'),
+  '4',
+  'two USD transactions each round to ¥2 before summing their ¥4 reporting subtotal'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.round(pg_catalog.sum(transaction_row.amount) * 150.5, 0)::text
+   FROM public.transactions AS transaction_row
+   WHERE transaction_row.id IN (
+     SELECT transaction_id FROM pg_temp.fx_test_transactions
+     WHERE label IN ('rounding_expense_a', 'rounding_expense_b')
+   )),
+  '3',
+  'rounding the combined USD 0.02 amount would produce ¥3 rather than the per-transaction ¥4 subtotal'
 );
 
 SELECT extensions.throws_ok(
@@ -434,6 +490,108 @@ SELECT extensions.ok(
      FROM public.transaction_totals((SELECT current_month FROM pg_temp.fx_reporting_context))
   ),
   'future-effective transactions do not change current native totals, JPY totals, or unresolved counts'
+);
+
+INSERT INTO pg_temp.fx_test_transactions
+SELECT 'voided_income', public.post_transaction(
+  'd0000000-0000-4000-8000-000000000080', 'income', (SELECT today FROM pg_temp.fx_reporting_context),
+  '1.00', 'USD', (SELECT id FROM public.categories WHERE user_id = auth.uid() AND name = 'Synthetic FX income'),
+  NULL, '[]'::jsonb
+);
+INSERT INTO pg_temp.fx_test_snapshots
+SELECT 'voided_income_auto', public.record_transaction_reporting_fx_snapshot(
+  (SELECT transaction_id FROM pg_temp.fx_test_transactions WHERE label = 'voided_income'),
+  'e0000000-0000-4000-8000-000000000080', 'resolved', 150.5, 'frankfurter_blended', 'frankfurter',
+  (SELECT today FROM pg_temp.fx_reporting_context), pg_catalog.statement_timestamp(),
+  '{"providers":["ECB"]}'::jsonb, NULL,
+  pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+    'effective_on', (SELECT today::text FROM pg_temp.fx_reporting_context),
+    'rate', '150.5', 'providers', pg_catalog.jsonb_build_array('ECB')
+  )),
+  (SELECT today - 7 FROM pg_temp.fx_reporting_context),
+  (SELECT today FROM pg_temp.fx_reporting_context)
+);
+INSERT INTO pg_temp.fx_void_snapshot_baseline (label, history)
+SELECT 'voided_income',
+       pg_catalog.jsonb_agg(pg_catalog.to_jsonb(snapshot) ORDER BY snapshot.revision)
+FROM public.transaction_reporting_fx_snapshots AS snapshot
+WHERE snapshot.transaction_id = (SELECT transaction_id FROM pg_temp.fx_test_transactions WHERE label = 'voided_income');
+SELECT public.void_transaction(
+  (SELECT transaction_id FROM pg_temp.fx_test_transactions WHERE label = 'voided_income'),
+  'Synthetic FX snapshot void regression'
+);
+SELECT extensions.is(
+  public.record_transaction_reporting_fx_snapshot(
+    (SELECT transaction_id FROM pg_temp.fx_test_transactions WHERE label = 'voided_income'),
+    'e0000000-0000-4000-8000-000000000080', 'resolved', 150.5, 'frankfurter_blended', 'frankfurter',
+    (SELECT today FROM pg_temp.fx_reporting_context),
+    (SELECT fetched_at FROM public.transaction_reporting_fx_snapshots
+     WHERE id = (SELECT snapshot_id FROM pg_temp.fx_test_snapshots WHERE label = 'voided_income_auto')),
+    '{"providers":["ECB"]}'::jsonb, NULL,
+    pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+      'effective_on', (SELECT today::text FROM pg_temp.fx_reporting_context),
+      'rate', '150.5', 'providers', pg_catalog.jsonb_build_array('ECB')
+    )),
+    (SELECT today - 7 FROM pg_temp.fx_reporting_context),
+    (SELECT today FROM pg_temp.fx_reporting_context)
+  ),
+  (SELECT snapshot_id FROM pg_temp.fx_test_snapshots WHERE label = 'voided_income_auto'),
+  'an identical automatic idempotency replay returns its existing snapshot after voiding'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.transaction_reporting_fx_snapshots
+   WHERE transaction_id = (SELECT transaction_id FROM pg_temp.fx_test_transactions WHERE label = 'voided_income')),
+  1,
+  'replaying a voided transaction snapshot does not create another revision'
+);
+SELECT extensions.throws_ok(
+  $$SELECT public.record_transaction_reporting_fx_snapshot(
+    (SELECT transaction_id FROM pg_temp.fx_test_transactions WHERE label = 'voided_income'),
+    'e0000000-0000-4000-8000-000000000081', 'unresolved', NULL, 'unresolved', 'frankfurter',
+    NULL, NULL, '{"failure":"retry_after_void"}'::jsonb,
+    'A new automatic resolution was attempted after this transaction was voided.', '[]'::jsonb, NULL, NULL
+  )$$,
+  '23514', NULL, 'a new automatic FX snapshot revision is rejected after voiding'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.jsonb_agg(pg_catalog.to_jsonb(snapshot) ORDER BY snapshot.revision)
+   FROM public.transaction_reporting_fx_snapshots AS snapshot
+   WHERE snapshot.transaction_id = (SELECT transaction_id FROM pg_temp.fx_test_transactions WHERE label = 'voided_income')),
+  (SELECT history FROM pg_temp.fx_void_snapshot_baseline WHERE label = 'voided_income'),
+  'voiding leaves every previously recorded FX revision unchanged'
+);
+SELECT extensions.is(
+  (SELECT amount::text || ':' || currency_code FROM public.transactions
+   WHERE id = (SELECT transaction_id FROM pg_temp.fx_test_transactions WHERE label = 'voided_income')),
+  '1.00:USD',
+  'voiding for an FX audit leaves the transaction native amount and currency unchanged'
+);
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.account_entries
+   WHERE transaction_id = (SELECT transaction_id FROM pg_temp.fx_test_transactions WHERE label = 'voided_income')),
+  0,
+  'voiding for an FX audit does not create or alter account entries'
+);
+SELECT extensions.ok(
+  NOT EXISTS (
+    (SELECT transaction_kind, currency_code, total_amount, transaction_count, resolved_total_jpy,
+            resolved_transaction_count, unresolved_transaction_count, included_transaction_count
+     FROM public.transaction_totals((SELECT current_month FROM pg_temp.fx_reporting_context))
+     EXCEPT
+     SELECT transaction_kind, currency_code, total_amount, transaction_count, resolved_total_jpy,
+            resolved_transaction_count, unresolved_transaction_count, included_transaction_count
+     FROM pg_temp.fx_reporting_baseline)
+  )
+  AND NOT EXISTS (
+    (SELECT transaction_kind, currency_code, total_amount, transaction_count, resolved_total_jpy,
+            resolved_transaction_count, unresolved_transaction_count, included_transaction_count
+     FROM pg_temp.fx_reporting_baseline)
+     EXCEPT
+     SELECT transaction_kind, currency_code, total_amount, transaction_count, resolved_total_jpy,
+            resolved_transaction_count, unresolved_transaction_count, included_transaction_count
+     FROM public.transaction_totals((SELECT current_month FROM pg_temp.fx_reporting_context))
+  ),
+  'voided transactions remain excluded from native and JPY reporting totals'
 );
 
 SELECT extensions.is(

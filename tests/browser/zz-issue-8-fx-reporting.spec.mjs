@@ -96,7 +96,7 @@ async function postSyntheticTransaction(request, token, { categoryId, kind, amou
 
 async function listFxRevisions(request, token, transactionId) {
   const query = new URLSearchParams({
-    select: "id,revision,status,source_kind,rate_to_jpy,converted_amount_jpy,override_note",
+    select: "id,revision,status,source_kind,rate_to_jpy,converted_amount_jpy,override_note,created_at",
     transaction_id: `eq.${transactionId}`,
     order: "revision.asc",
   });
@@ -298,4 +298,91 @@ test("Issue 8 historical FX reporting is authenticated, exact, auditable, and re
   assert.ok(dimensions.scrollWidth <= dimensions.viewportWidth, `mobile dashboard overflows by ${dimensions.scrollWidth - dimensions.viewportWidth}px`);
   await captureScreenshot(mobile, "issue-8-incomplete-mobile.png", "Spending this month by currency");
   await mobileContext.close();
+});
+
+test("automatic snapshot resolution racing with voiding cannot append after void completion", async ({ request }) => {
+  const authState = JSON.parse(await readFile(path.resolve(process.cwd(), AUTH_STATE_PATH), "utf8"));
+  const cookie = authState.cookies.find((item) => item.value.startsWith("base64-"));
+  assert.ok(cookie, "authenticated local browser session cookie must exist");
+  const session = JSON.parse(Buffer.from(cookie.value.slice("base64-".length), "base64url").toString("utf8"));
+  assert.equal(session.user.id, OWNER_ID);
+  const token = session.access_token;
+  const today = tokyoToday();
+  const [category] = await apiJson(request, "/rest/v1/categories", token, [{
+    user_id: OWNER_ID,
+    kind: "income",
+    name: `Synthetic FX void race ${randomUUID()}`,
+  }]);
+  assert.ok(category?.id, "synthetic FX category must be created");
+
+  const transactionId = await postSyntheticTransaction(request, token, {
+    categoryId: category.id,
+    kind: "income",
+    amount: "1.00",
+    currency: "USD",
+    occurredOn: today,
+    merchant: "Synthetic FX void race",
+  });
+  const originalSnapshot = automaticSnapshot(transactionId, today, "150.25");
+  const originalSnapshotId = await apiJson(
+    request,
+    "/rest/v1/rpc/record_transaction_reporting_fx_snapshot",
+    token,
+    originalSnapshot,
+  );
+
+  const concurrentResolution = {
+    p_transaction_id: transactionId,
+    p_idempotency_key: randomUUID(),
+    p_status: "unresolved",
+    p_rate_to_jpy: null,
+    p_source_kind: "unresolved",
+    p_provider_code: "frankfurter",
+    p_rate_effective_on: null,
+    p_fetched_at: null,
+    p_provider_metadata: { failure: "concurrent_void_race" },
+    p_resolution_reason: "Synthetic concurrent resolver attempt.",
+    p_cache_rates: [],
+    p_cache_requested_from: null,
+    p_cache_requested_through: null,
+  };
+  const rpcHeaders = {
+    apikey: PUBLISHABLE_KEY,
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+  const [resolutionResponse, voidResponse] = await Promise.all([
+    request.fetch(`${SUPABASE_URL}/rest/v1/rpc/record_transaction_reporting_fx_snapshot`, {
+      method: "POST",
+      headers: rpcHeaders,
+      data: concurrentResolution,
+    }),
+    request.fetch(`${SUPABASE_URL}/rest/v1/rpc/void_transaction`, {
+      method: "POST",
+      headers: rpcHeaders,
+      data: { p_transaction_id: transactionId, p_reason: "Synthetic concurrent FX void." },
+    }),
+  ]);
+  const resolutionBody = await resolutionResponse.json().catch(() => null);
+  const voidBody = await voidResponse.json().catch(() => null);
+  assert.ok(voidResponse.ok(), `void RPC failed: ${JSON.stringify(voidBody)}`);
+  assert.equal(voidBody, transactionId);
+  if (!resolutionResponse.ok()) assert.equal(resolutionBody?.code, "23514");
+
+  const [transactionRows, revisions] = await Promise.all([
+    apiJson(request, `/rest/v1/transactions?select=status,voided_at&id=eq.${transactionId}`, token),
+    listFxRevisions(request, token, transactionId),
+  ]);
+  assert.equal(transactionRows[0]?.status, "voided");
+  assert.equal(revisions.length, resolutionResponse.ok() ? 2 : 1);
+  assert.ok(
+    revisions.every((revision) => revision.created_at <= transactionRows[0].voided_at),
+    "no FX revision may be created after the void has completed",
+  );
+  assert.equal(
+    await apiJson(request, "/rest/v1/rpc/record_transaction_reporting_fx_snapshot", token, originalSnapshot),
+    originalSnapshotId,
+    "an identical pre-void idempotent replay still returns its original snapshot",
+  );
+  assert.equal((await listFxRevisions(request, token, transactionId)).length, revisions.length);
 });
