@@ -106,6 +106,7 @@ Install the Supabase CLI and Docker using the official Supabase local-developmen
 npx --yes supabase@2.122.1 start
 npx --yes supabase@2.122.1 db reset --local  # destructive to the local Supabase database only
 npm run test:db                              # pgTAP integration tests
+npm run test:db:upgrade                 # local-only upgrade test with synthetic pre-Issue #8 transactions
 npx playwright install chromium             # once per local browser environment
 npm run test:browser                         # authenticated UI smoke test with synthetic local data
 SAVE_BROWSER_SCREENSHOTS=1 npm run test:browser -- --grep "Issue 8" # Issue 8 resolved/pending/incomplete desktop and mobile screenshots
@@ -113,6 +114,8 @@ npx --yes supabase@2.122.1 stop --no-backup
 ```
 
 `supabase db reset --local` rebuilds the database from versioned migrations and is the clean-database migration check. Never add `--linked` to a local reset command. `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` cover application checks. GitHub Actions also runs local Supabase/PostgreSQL integration and authenticated browser smoke tests on pull requests.
+
+`npm run test:db:upgrade` deliberately rebuilds only the local database to the last pre-Issue #8 migration, inserts synthetic historical/current/future transactions, applies the FX migration, and runs pgTAP assertions against the pre-existing rows. It then restores a clean current local schema; it never targets a linked or hosted project.
 
 The browser setup accepts loopback Supabase URLs only. Each invocation creates a unique synthetic Auth user, updates the local owner allowlist, and writes its session to ignored test artifacts; it does not reset or delete local database state. The service-role key is confined to that local test fixture, while app routes and financial changes use the user's authenticated session. Existing transaction browser flows exercise the UI; the Issue 8 FX regression seeds synthetic rows through authenticated local RPCs, applies manual revisions in the UI, and captures desktop/mobile reporting states. Do not run it against hosted Faylo.
 

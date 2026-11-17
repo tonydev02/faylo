@@ -458,9 +458,9 @@ INSERT INTO public.transaction_reporting_fx_snapshots (
 SELECT transaction_row.user_id,
        transaction_row.id,
        1,
-       CASE WHEN transaction_row.currency_code <> 'JPY'
-                  AND transaction_row.occurred_on > (pg_catalog.statement_timestamp() AT TIME ZONE 'Asia/Tokyo')::date
-            THEN 'pending_future' ELSE 'resolved' END,
+       CASE WHEN transaction_row.currency_code = 'JPY' THEN 'resolved'
+            WHEN transaction_row.occurred_on > (pg_catalog.statement_timestamp() AT TIME ZONE 'Asia/Tokyo')::date THEN 'pending_future'
+            ELSE 'unresolved' END,
        CASE WHEN transaction_row.currency_code = 'JPY' THEN 1::numeric END,
        CASE WHEN transaction_row.currency_code = 'JPY' THEN pg_catalog.round(transaction_row.amount, 0) END,
        CASE WHEN transaction_row.currency_code = 'JPY' THEN 'identity' ELSE 'unresolved' END,
