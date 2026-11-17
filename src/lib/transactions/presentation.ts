@@ -1,7 +1,17 @@
 import { formatMoney } from "../accounts/money.ts";
 import type { TransactionEventKind } from "./validation";
 
-export function formatTransactionAmount(amount: string, currencyCode: string, kind: TransactionEventKind): string {
+export function formatSignedAmount(amount: string, currencyCode: string): string {
+  const negative = amount.startsWith("-");
+  return `${negative ? "−" : "+"}${formatMoney(negative ? amount.slice(1) : amount, currencyCode)}`;
+}
+
+export function formatTransactionAmount(
+  amount: string,
+  currencyCode: string,
+  kind: Exclude<TransactionEventKind, "transfer">,
+): string {
+  if (kind === "balance_adjustment") return formatSignedAmount(amount, currencyCode);
   return `${kind === "income" ? "+" : "−"}${formatMoney(amount, currencyCode)}`;
 }
 

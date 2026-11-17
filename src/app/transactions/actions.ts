@@ -9,6 +9,8 @@ import {
   correctTransaction,
   createCategory,
   createPaymentMethod,
+  postAccountTransfer,
+  postBalanceAdjustment,
   postCardSettlement,
   postTransaction,
   renameCategory,
@@ -16,12 +18,16 @@ import {
   voidTransaction,
 } from "@/lib/transactions/repository";
 import {
+  validateAccountTransferInput,
+  validateBalanceAdjustmentInput,
   validateCardSettlementInput,
   validateCategoryInput,
   validatePaymentMethodInput,
   validateTransactionId,
   validateTransactionInput,
   validateVoidReason,
+  type AccountMovementField,
+  type AccountMovementFormState,
   type CardSettlementField,
   type CardSettlementFormState,
   type CategoryFormState,
@@ -92,6 +98,65 @@ export async function recordCardSettlementAction(_previous: CardSettlementFormSt
   revalidatePath("/transactions/settlement");
   revalidatePath(`/transactions/${result.value}`);
   redirect(`/transactions/${result.value}?settled=1`);
+}
+
+export async function postAccountTransferAction(_previous: AccountMovementFormState, formData: FormData): Promise<AccountMovementFormState> {
+  const owner = await requireOwner();
+  const validation = validateAccountTransferInput({
+    sourceAccountId: stringField(formData, "sourceAccountId"),
+    destinationAccountId: stringField(formData, "destinationAccountId"),
+    sentAmount: stringField(formData, "sentAmount"),
+    receivedAmount: stringField(formData, "receivedAmount"),
+    occurredOn: stringField(formData, "occurredOn"),
+    note: stringField(formData, "note"),
+    idempotencyKey: stringField(formData, "idempotencyKey"),
+  });
+  if (!validation.ok) return { message: validation.message ?? "Review the highlighted transfer details.", errors: validation.errors };
+
+  const result = await postAccountTransfer(owner.id, validation.value);
+  if (!result.ok) {
+    const field = result.field as AccountMovementField | undefined;
+    return {
+      message: result.kind === "unavailable" ? "Transfer storage is unavailable. Try again." : result.message ?? "The transfer could not be saved.",
+      errors: field ? { [field]: result.message ?? "Check this field and try again." } : undefined,
+    };
+  }
+  revalidatePath("/");
+  revalidatePath("/accounts");
+  revalidatePath(`/accounts/${validation.value.sourceAccountId}`);
+  revalidatePath(`/accounts/${validation.value.destinationAccountId}`);
+  revalidatePath("/transactions");
+  revalidatePath("/transactions/transfer");
+  revalidatePath(`/transactions/${result.value}`);
+  redirect(`/transactions/${result.value}?transferred=1`);
+}
+
+export async function postBalanceAdjustmentAction(_previous: AccountMovementFormState, formData: FormData): Promise<AccountMovementFormState> {
+  const owner = await requireOwner();
+  const validation = validateBalanceAdjustmentInput({
+    accountId: stringField(formData, "accountId"),
+    amount: stringField(formData, "amount"),
+    occurredOn: stringField(formData, "occurredOn"),
+    reason: stringField(formData, "reason"),
+    idempotencyKey: stringField(formData, "idempotencyKey"),
+  });
+  if (!validation.ok) return { message: validation.message ?? "Review the highlighted adjustment details.", errors: validation.errors };
+
+  const result = await postBalanceAdjustment(owner.id, validation.value);
+  if (!result.ok) {
+    const field = result.field as AccountMovementField | undefined;
+    return {
+      message: result.kind === "unavailable" ? "Adjustment storage is unavailable. Try again." : result.message ?? "The adjustment could not be saved.",
+      errors: field ? { [field]: result.message ?? "Check this field and try again." } : undefined,
+    };
+  }
+  revalidatePath("/");
+  revalidatePath("/accounts");
+  revalidatePath(`/accounts/${validation.value.accountId}`);
+  revalidatePath("/transactions");
+  revalidatePath("/transactions/adjustment");
+  revalidatePath(`/transactions/${result.value}`);
+  redirect(`/transactions/${result.value}?adjusted=1`);
 }
 
 export async function correctTransactionAction(_previous: TransactionFormState, formData: FormData): Promise<TransactionFormState> {

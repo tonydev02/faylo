@@ -4,8 +4,8 @@ import { formatEffectiveBalance } from "@/lib/accounts/presentation";
 import { listAccounts } from "@/lib/accounts/repository";
 import { formatMoney } from "@/lib/accounts/money";
 import { requireOwner } from "@/lib/auth/server";
-import { currentMonthLabel, formatTransactionAmount, formatTransactionDate } from "@/lib/transactions/presentation";
-import { getUserTimezone, listMonthlyTransactionTotals, listTransactions, type TransactionFilters, type TransactionTotal } from "@/lib/transactions/repository";
+import { currentMonthLabel, formatSignedAmount, formatTransactionAmount, formatTransactionDate } from "@/lib/transactions/presentation";
+import { getUserTimezone, listMonthlyTransactionTotals, listTransactions, type TransactionFilters, type TransactionRecord, type TransactionTotal } from "@/lib/transactions/repository";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +29,32 @@ function MonthlyTotals({ title, kind, totals }: { title: string; kind: "income" 
       <p className="mt-4 border-t border-border pt-3 text-[12px] leading-5 text-muted">{kind === "income" ? "Posted income only" : "Posted spending only"} · original currencies stay separate</p>
     </section>
   );
+}
+
+function recentTitle(record: TransactionRecord): string {
+  if (record.kind === "transfer") {
+    const [source, destination] = record.accountMovements;
+    return source && destination ? `${source.accountName} → ${destination.accountName}` : "Own-account transfer";
+  }
+  if (record.kind === "balance_adjustment") return "Balance adjustment";
+  return record.merchant ?? record.categoryName;
+}
+
+function recentSubtitle(record: TransactionRecord): string {
+  if (record.kind === "transfer") return `${formatTransactionDate(record.occurredOn)} · excluded from income and spending`;
+  if (record.kind === "balance_adjustment") {
+    const account = record.accountMovements[0]?.accountName ?? "Tracked account";
+    return `${formatTransactionDate(record.occurredOn)} · ${account} · ${record.adjustmentReason ?? "Reason not available"}`;
+  }
+  return `${formatTransactionDate(record.occurredOn)} · ${record.categoryName}`;
+}
+
+function recentAmounts(record: TransactionRecord): string[] {
+  if (record.kind === "transfer") {
+    return record.accountMovements.map((movement) => formatSignedAmount(movement.amount, movement.currencyCode));
+  }
+  if (record.amount === null || record.currencyCode === null) return ["Account movement"];
+  return [formatTransactionAmount(record.amount, record.currencyCode, record.kind)];
 }
 
 export default async function HomePage() {
@@ -93,7 +119,10 @@ export default async function HomePage() {
               <div className="mt-5 flex min-h-[180px] flex-col items-center justify-center rounded-2xl border border-dashed border-border/90 bg-canvas/25 px-5 text-center"><span className="flex size-10 items-center justify-center rounded-full border border-border bg-surface text-muted"><Icon className="size-[18px]" name="activity" /></span><h3 className="mt-3 text-[13px] font-medium text-ink/90">No transactions yet</h3><p className="mt-1.5 max-w-sm text-[12px] leading-5 text-muted">Opening balances remain separate. Add income or spending to begin your transaction history.</p></div>
             ) : (
               <ul className="mt-4 divide-y divide-border">
-                {recent.map((record) => <li key={record.id}><Link className="transaction-row-link flex min-h-[66px] items-center justify-between gap-3 rounded-xl px-2 py-3 transition-colors hover:bg-canvas/70" href={`/transactions/${record.id}`}><span className="min-w-0"><span className="block truncate text-[13px] font-medium text-ink">{record.merchant ?? record.categoryName}</span><span className="mt-1 block truncate text-[11px] text-muted">{formatTransactionDate(record.occurredOn)} · {record.categoryName}</span></span><span className={record.kind === "income" ? "shrink-0 text-[14px] font-semibold tabular-nums text-mint" : "shrink-0 text-[14px] font-medium tabular-nums text-ink"}>{formatTransactionAmount(record.amount, record.currencyCode, record.kind)}</span></Link></li>)}
+                {recent.map((record) => {
+                  const amounts = recentAmounts(record);
+                  return <li key={record.id}><Link className="transaction-row-link flex min-h-[66px] items-center justify-between gap-3 rounded-xl px-2 py-3 transition-colors hover:bg-canvas/70" href={`/transactions/${record.id}`}><span className="min-w-0"><span className="block truncate text-[13px] font-medium text-ink">{recentTitle(record)}</span><span className="mt-1 block truncate text-[11px] text-muted">{recentSubtitle(record)}</span></span><span aria-label="Account movement amounts" className={record.kind === "income" ? "shrink-0 text-right text-[14px] font-semibold tabular-nums text-mint" : "shrink-0 text-right text-[12px] font-medium tabular-nums text-ink"}>{amounts.map((amount, index) => <span className="block" key={`${record.id}-${index}`}>{amount}</span>)}</span></Link></li>;
+                })}
               </ul>
             )}
           </section>

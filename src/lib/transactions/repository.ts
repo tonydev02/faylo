@@ -1,8 +1,11 @@
 import "server-only";
 
 import { listAccounts, type TrackedAccount } from "@/lib/accounts/repository";
+import { currencyFractionDigits } from "@/lib/accounts/money";
 import { createSupabaseServerClient } from "@/lib/auth/server";
 import type {
+  AccountTransferInput,
+  BalanceAdjustmentInput,
   CardSettlementInput,
   PaymentMethodKind,
   TransactionEventKind,
@@ -12,8 +15,15 @@ import type {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL_PATTERN = /^(0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
+const SIGNED_DECIMAL_PATTERN = /^-?(0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
 const TRANSACTION_KINDS: Record<TransactionKind, true> = { income: true, expense: true };
-const TRANSACTION_EVENT_KINDS: Record<TransactionEventKind, true> = { income: true, expense: true, card_settlement: true };
+const TRANSACTION_EVENT_KINDS: Record<TransactionEventKind, true> = {
+  income: true,
+  expense: true,
+  card_settlement: true,
+  transfer: true,
+  balance_adjustment: true,
+};
 const PAYMENT_METHOD_KINDS: Record<PaymentMethodKind, true> = {
   cash: true,
   debit_card: true,
@@ -21,6 +31,7 @@ const PAYMENT_METHOD_KINDS: Record<PaymentMethodKind, true> = {
   bank_transfer: true,
   other: true,
 };
+const TRANSACTION_SOURCES = { manual: true, telegram: true, import: true } as const;
 const FUNDING_STATUSES = { funded: true, credit_card: true, unassigned: true } as const;
 const TRANSACTION_STATUSES: Record<TransactionStatus, true> = { posted: true, voided: true };
 
@@ -44,13 +55,21 @@ export type TransactionPaymentMethod = {
   archivedAt: string | null;
 };
 
+export type TransactionAccountMovement = {
+  accountId: string;
+  accountName: string;
+  amount: string;
+  currencyCode: string;
+  recordedAt: string;
+};
+
 export type TransactionRecord = {
   id: string;
   kind: TransactionEventKind;
   occurredAt: string;
   occurredOn: string;
-  amount: string;
-  currencyCode: string;
+  amount: string | null;
+  currencyCode: string | null;
   categoryId: string | null;
   categoryName: string;
   paymentMethodId: string | null;
@@ -62,8 +81,12 @@ export type TransactionRecord = {
   status: TransactionStatus;
   merchant: string | null;
   note: string | null;
+  source: keyof typeof TRANSACTION_SOURCES;
+  adjustmentReason: string | null;
+  accountMovements: TransactionAccountMovement[];
   voidReason: string | null;
   voidedAt: string | null;
+  voidedBy: string | null;
   recordedAt: string;
   correctedFromTransactionId: string | null;
   correctedByTransactionId: string | null;
@@ -100,13 +123,21 @@ export type TransactionSetup = {
   paymentMethods: TransactionPaymentMethod[];
 };
 
+type RawAccountMovement = {
+  account_id: string;
+  account_name: string;
+  amount: string;
+  currency_code: string;
+  recorded_at: string;
+};
+
 type RawTransaction = {
   transaction_id: string;
   transaction_kind: TransactionEventKind;
   occurred_at: string;
   occurred_on: string;
-  amount: string;
-  currency_code: string;
+  amount: string | null;
+  currency_code: string | null;
   category_id: string | null;
   category_name: string | null;
   payment_method_id: string | null;
@@ -118,8 +149,12 @@ type RawTransaction = {
   status: TransactionStatus;
   merchant: string | null;
   note: string | null;
+  source: keyof typeof TRANSACTION_SOURCES;
+  adjustment_reason: string | null;
+  account_movements: RawAccountMovement[];
   void_reason: string | null;
   voided_at: string | null;
+  voided_by: string | null;
   created_at: string;
   corrected_from_transaction_id: string | null;
   corrected_by_transaction_id: string | null;
@@ -127,17 +162,32 @@ type RawTransaction = {
   total_count: number | string;
 };
 
+function isRawAccountMovement(value: unknown): value is RawAccountMovement {
+  if (typeof value !== "object" || value === null) return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.account_id === "string" && UUID_PATTERN.test(row.account_id)
+    && typeof row.account_name === "string"
+    && typeof row.amount === "string" && SIGNED_DECIMAL_PATTERN.test(row.amount)
+    && typeof row.currency_code === "string" && /^[A-Z]{3}$/.test(row.currency_code)
+    && typeof row.recorded_at === "string";
+}
+
 function isRawTransaction(value: unknown): value is RawTransaction {
   if (typeof value !== "object" || value === null) return false;
   const row = value as Record<string, unknown>;
   const isNullableString = (item: unknown) => item === null || typeof item === "string";
   const isNullableUuid = (item: unknown) => item === null || (typeof item === "string" && UUID_PATTERN.test(item));
+  const eventKindValid = typeof row.transaction_kind === "string" && Object.hasOwn(TRANSACTION_EVENT_KINDS, row.transaction_kind);
+  const eventAmountValid = row.transaction_kind === "transfer"
+    ? row.amount === null && row.currency_code === null
+    : typeof row.amount === "string"
+      && (row.transaction_kind === "balance_adjustment" ? SIGNED_DECIMAL_PATTERN.test(row.amount) : DECIMAL_PATTERN.test(row.amount))
+      && typeof row.currency_code === "string" && /^[A-Z]{3}$/.test(row.currency_code);
   return typeof row.transaction_id === "string" && UUID_PATTERN.test(row.transaction_id)
-    && typeof row.transaction_kind === "string" && Object.hasOwn(TRANSACTION_EVENT_KINDS, row.transaction_kind)
+    && eventKindValid
     && typeof row.occurred_at === "string"
     && typeof row.occurred_on === "string"
-    && typeof row.amount === "string" && DECIMAL_PATTERN.test(row.amount)
-    && typeof row.currency_code === "string" && /^[A-Z]{3}$/.test(row.currency_code)
+    && eventAmountValid
     && (row.category_id === null || (typeof row.category_id === "string" && UUID_PATTERN.test(row.category_id)))
     && (row.category_name === null || typeof row.category_name === "string")
     && isNullableUuid(row.payment_method_id)
@@ -149,8 +199,12 @@ function isRawTransaction(value: unknown): value is RawTransaction {
     && typeof row.status === "string" && Object.hasOwn(TRANSACTION_STATUSES, row.status)
     && isNullableString(row.merchant)
     && isNullableString(row.note)
+    && typeof row.source === "string" && Object.hasOwn(TRANSACTION_SOURCES, row.source)
+    && isNullableString(row.adjustment_reason)
+    && Array.isArray(row.account_movements) && row.account_movements.every(isRawAccountMovement)
     && isNullableString(row.void_reason)
     && isNullableString(row.voided_at)
+    && isNullableUuid(row.voided_by)
     && typeof row.created_at === "string"
     && isNullableUuid(row.corrected_from_transaction_id)
     && isNullableUuid(row.corrected_by_transaction_id)
@@ -159,6 +213,9 @@ function isRawTransaction(value: unknown): value is RawTransaction {
 }
 
 function mapTransaction(row: RawTransaction): TransactionRecord {
+  const fallbackCategory = row.transaction_kind === "card_settlement" ? "Card settlement"
+    : row.transaction_kind === "transfer" ? "Transfer"
+      : row.transaction_kind === "balance_adjustment" ? "Balance adjustment" : "Uncategorized";
   return {
     id: row.transaction_id,
     kind: row.transaction_kind,
@@ -167,7 +224,7 @@ function mapTransaction(row: RawTransaction): TransactionRecord {
     amount: row.amount,
     currencyCode: row.currency_code,
     categoryId: row.category_id,
-    categoryName: row.category_name ?? "Card settlement",
+    categoryName: row.category_name ?? fallbackCategory,
     paymentMethodId: row.payment_method_id,
     paymentMethodName: row.payment_method_name,
     paymentMethodKind: row.payment_method_kind,
@@ -177,8 +234,18 @@ function mapTransaction(row: RawTransaction): TransactionRecord {
     status: row.status,
     merchant: row.merchant,
     note: row.note,
+    source: row.source,
+    adjustmentReason: row.adjustment_reason,
+    accountMovements: row.account_movements.map((movement) => ({
+      accountId: movement.account_id,
+      accountName: movement.account_name,
+      amount: movement.amount,
+      currencyCode: movement.currency_code,
+      recordedAt: movement.recorded_at,
+    })),
     voidReason: row.void_reason,
     voidedAt: row.voided_at,
+    voidedBy: row.voided_by,
     recordedAt: row.created_at,
     correctedFromTransactionId: row.corrected_from_transaction_id,
     correctedByTransactionId: row.corrected_by_transaction_id,
@@ -186,6 +253,7 @@ function mapTransaction(row: RawTransaction): TransactionRecord {
     totalCount: Number(row.total_count),
   };
 }
+
 
 function isRawCategory(value: unknown): value is { id: string; kind: TransactionKind; name: string; parent_id: string | null; archived_at: string | null } {
   if (typeof value !== "object" || value === null) return false;
@@ -637,4 +705,143 @@ export async function getUserTimezone(ownerId: string): Promise<string> {
     return "Asia/Tokyo";
   }
   return "Asia/Tokyo";
+}
+function amountMatchesCurrencyScale(amount: string, currencyCode: string, signed: boolean): boolean {
+  const pattern = signed ? SIGNED_DECIMAL_PATTERN : DECIMAL_PATTERN;
+  const match = pattern.exec(amount);
+  const fractionDigits = currencyFractionDigits(currencyCode);
+  const normalized = amount.replace(/^-/, "");
+  return match !== null
+    && fractionDigits !== null
+    && /[1-9]/.test(normalized)
+    && (normalized.split(".", 2)[1]?.length ?? 0) <= fractionDigits;
+}
+
+function normalizedPositiveDecimal(value: string): string {
+  const [whole, fraction = ""] = value.split(".", 2);
+  const normalizedFraction = fraction.replace(/0+$/, "");
+  return normalizedFraction ? `${whole}.${normalizedFraction}` : whole!;
+}
+
+function accountMovementRpcFailure(error: { message?: string }, amountField: string, fallback: string) {
+  const message = error.message?.toLowerCase() ?? "";
+  if (message.includes("idempotency key")) {
+    return { message: "This submission key was already used for different movement details. Reload the page and try again." };
+  }
+  if (message.includes("opening balance") || message.includes("predates") || message.includes("local occurrence date")) {
+    return { field: "occurredOn", message: "The economic date is outside the account's tracking period." };
+  }
+  if (message.includes("currency") || message.includes("fractional scale") || message.includes("amount")) {
+    return { field: amountField, message: "Check the amount and the selected account's currency precision." };
+  }
+  if (message.includes("distinct")) {
+    return { field: "destinationAccountId", message: "Choose a different destination account." };
+  }
+  return { message: fallback };
+}
+
+export async function postAccountTransfer(ownerId: string, input: AccountTransferInput): Promise<ServiceResult<string>> {
+  if (!UUID_PATTERN.test(ownerId) || !UUID_PATTERN.test(input.idempotencyKey)
+    || !UUID_PATTERN.test(input.sourceAccountId) || !UUID_PATTERN.test(input.destinationAccountId)
+    || input.sourceAccountId === input.destinationAccountId) {
+    return { ok: false, kind: "rejected", field: "destinationAccountId", message: "Choose two different active accounts." };
+  }
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { data: accounts, error: accountError } = await supabase.from("accounts")
+      .select("id,name,currency_code,status,opening_as_of")
+      .eq("user_id", ownerId)
+      .in("id", [input.sourceAccountId, input.destinationAccountId]);
+    if (accountError) return { ok: false, kind: "unavailable" };
+    const source = accounts?.find((account) => account.id === input.sourceAccountId);
+    const destination = accounts?.find((account) => account.id === input.destinationAccountId);
+    if (!source || !destination) {
+      return { ok: false, kind: "rejected", field: "sourceAccountId", message: "Choose two accounts owned by you." };
+    }
+    if (source.status !== "active") return { ok: false, kind: "rejected", field: "sourceAccountId", message: "Choose an active source account." };
+    if (destination.status !== "active") return { ok: false, kind: "rejected", field: "destinationAccountId", message: "Choose an active destination account." };
+    if (input.occurredOn < source.opening_as_of || input.occurredOn < destination.opening_as_of) {
+      return { ok: false, kind: "rejected", field: "occurredOn", message: "The economic date must be on or after both accounts' opening dates." };
+    }
+    if (!amountMatchesCurrencyScale(input.sentAmount, source.currency_code, false)) {
+      return { ok: false, kind: "rejected", field: "sentAmount", message: `Enter a positive amount using ${source.currency_code} precision.` };
+    }
+    if (!amountMatchesCurrencyScale(input.receivedAmount, destination.currency_code, false)) {
+      return { ok: false, kind: "rejected", field: "receivedAmount", message: `Enter a positive amount using ${destination.currency_code} precision.` };
+    }
+    if (source.currency_code === destination.currency_code
+      && normalizedPositiveDecimal(input.sentAmount) !== normalizedPositiveDecimal(input.receivedAmount)) {
+      return { ok: false, kind: "rejected", field: "receivedAmount", message: "Same-currency transfers must send and receive the same amount." };
+    }
+
+    const { data, error } = await supabase.rpc("post_transaction", {
+      p_idempotency_key: input.idempotencyKey,
+      p_transaction_kind: "transfer",
+      p_occurred_on: input.occurredOn,
+      p_amount: null,
+      p_currency_code: null,
+      p_category_id: null,
+      p_payment_method_id: null,
+      p_entries: [
+        { account_id: source.id, amount: `-${input.sentAmount}`, currency_code: source.currency_code },
+        { account_id: destination.id, amount: input.receivedAmount, currency_code: destination.currency_code },
+      ],
+      p_source: "manual",
+      p_merchant: null,
+      p_note: input.note,
+      p_adjustment_reason: null,
+      p_occurred_at: null,
+    });
+    if (error || typeof data !== "string" || !UUID_PATTERN.test(data)) {
+      return { ok: false, kind: "rejected", ...accountMovementRpcFailure(error ?? {}, "sentAmount", "The transfer could not be saved. Check both accounts, amounts, and date.") };
+    }
+    return { ok: true, value: data };
+  } catch {
+    return { ok: false, kind: "unavailable" };
+  }
+}
+
+export async function postBalanceAdjustment(ownerId: string, input: BalanceAdjustmentInput): Promise<ServiceResult<string>> {
+  if (!UUID_PATTERN.test(ownerId) || !UUID_PATTERN.test(input.idempotencyKey) || !UUID_PATTERN.test(input.accountId)) {
+    return { ok: false, kind: "rejected", field: "accountId", message: "Choose an active account." };
+  }
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { data: account, error: accountError } = await supabase.from("accounts")
+      .select("id,name,currency_code,status,opening_as_of")
+      .eq("user_id", ownerId)
+      .eq("id", input.accountId)
+      .maybeSingle();
+    if (accountError) return { ok: false, kind: "unavailable" };
+    if (!account) return { ok: false, kind: "rejected", field: "accountId", message: "Choose an account owned by you." };
+    if (account.status !== "active") return { ok: false, kind: "rejected", field: "accountId", message: "Choose an active account." };
+    if (input.occurredOn < account.opening_as_of) {
+      return { ok: false, kind: "rejected", field: "occurredOn", message: "The economic date must be on or after this account's opening date." };
+    }
+    if (!amountMatchesCurrencyScale(input.amount, account.currency_code, true)) {
+      return { ok: false, kind: "rejected", field: "amount", message: `Enter a non-zero amount using ${account.currency_code} precision.` };
+    }
+
+    const { data, error } = await supabase.rpc("post_transaction", {
+      p_idempotency_key: input.idempotencyKey,
+      p_transaction_kind: "balance_adjustment",
+      p_occurred_on: input.occurredOn,
+      p_amount: input.amount,
+      p_currency_code: account.currency_code,
+      p_category_id: null,
+      p_payment_method_id: null,
+      p_entries: [{ account_id: account.id, amount: input.amount, currency_code: account.currency_code }],
+      p_source: "manual",
+      p_merchant: null,
+      p_note: null,
+      p_adjustment_reason: input.reason,
+      p_occurred_at: null,
+    });
+    if (error || typeof data !== "string" || !UUID_PATTERN.test(data)) {
+      return { ok: false, kind: "rejected", ...accountMovementRpcFailure(error ?? {}, "amount", "The adjustment could not be saved. Check the account, amount, and date.") };
+    }
+    return { ok: true, value: data };
+  } catch {
+    return { ok: false, kind: "unavailable" };
+  }
 }

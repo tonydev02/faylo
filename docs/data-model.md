@@ -70,7 +70,7 @@ For `credit_card`, `linked_account_id` is not treated as an automatic debit sour
 **`transactions`**
 - `id` UUID PK, `user_id` FK
 - `type`: `income` | `expense` | `transfer` | `card_settlement` | `balance_adjustment`
-- `occurred_at` exact economic effective instant and `occurred_on` local booking/reporting date in the user's configured timezone. Date-only input maps to local midnight; when both are supplied, the date must match the instant in that timezone.
+- `occurred_at` exact economic effective instant and `occurred_on` local booking/reporting date in the user's configured timezone. Date-only input maps to local midnight, not a supplied time of day; `created_at` is the actual transaction recording timestamp. When both `occurred_at` and `occurred_on` are supplied, the date must match the instant in that timezone.
 - `amount_minor`, `currency_code` for original expense/income amount (nullable for multi-leg transfer)
 - `category_id` nullable FK, only for income/expense
 - `payment_method_id` nullable FK

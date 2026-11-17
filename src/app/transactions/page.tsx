@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { AppShell, Icon } from "@/components/app-shell";
-import { formatTransactionAmount, formatTransactionDate } from "@/lib/transactions/presentation";
+import { formatSignedAmount, formatTransactionAmount, formatTransactionDate } from "@/lib/transactions/presentation";
 import { listTransactions, type TransactionFilters, type TransactionRecord } from "@/lib/transactions/repository";
 import { isValidTransactionDate, type TransactionEventKind, type TransactionStatus } from "@/lib/transactions/validation";
 import { requireOwner } from "@/lib/auth/server";
@@ -22,9 +22,31 @@ function fundingLabel(record: TransactionRecord): string {
   if (record.kind === "card_settlement") {
     return `Paid from ${record.fundingAccountName ?? "tracked account"} · ${record.paymentMethodName ?? "credit card"}`;
   }
+  if (record.kind === "transfer") {
+    const [source, destination] = record.accountMovements;
+    return source && destination
+      ? `${source.accountName} → ${destination.accountName} · excluded from income and spending`
+      : "Two account movements · excluded from income and spending";
+  }
+  if (record.kind === "balance_adjustment") {
+    return `${record.accountMovements[0]?.accountName ?? "Tracked account"} · excluded from income and spending`;
+  }
   if (record.fundingStatus === "unassigned") return "Unassigned · reconcile";
   if (record.fundingStatus === "credit_card") return `${record.paymentMethodName ?? "Credit card"} · no card balance tracked`;
   return `${record.fundingAccountName ?? "Tracked account"}${record.paymentMethodName ? ` · ${record.paymentMethodName}` : ""}`;
+}
+
+function transactionTitle(record: TransactionRecord): string {
+  if (record.kind === "transfer") {
+    const [source, destination] = record.accountMovements;
+    return source && destination ? `${source.accountName} → ${destination.accountName}` : "Own-account transfer";
+  }
+  return record.merchant ?? record.categoryName;
+}
+
+function transferAmounts(record: TransactionRecord): string[] {
+  return record.accountMovements.map((movement, index) =>
+    `${index === 0 ? "Sent" : "Received"} ${formatSignedAmount(movement.amount, movement.currencyCode)}`);
 }
 
 export default async function TransactionsPage({ searchParams }: { searchParams: SearchParams }) {
@@ -35,7 +57,8 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
   const requestedStatus = scalar("status");
   const filters: TransactionFilters = {
     search: scalar("q").trim(),
-    kind: requestedKind === "income" || requestedKind === "expense" || requestedKind === "card_settlement" ? requestedKind as TransactionEventKind : "all",
+    kind: requestedKind === "income" || requestedKind === "expense" || requestedKind === "card_settlement"
+      || requestedKind === "transfer" || requestedKind === "balance_adjustment" ? requestedKind as TransactionEventKind : "all",
     status: requestedStatus === "posted" || requestedStatus === "voided" ? requestedStatus as TransactionStatus : "all",
     occurredFrom: scalar("from"),
     occurredThrough: scalar("to"),
@@ -56,13 +79,15 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
       <div className="mx-auto max-w-[1200px] space-y-7">
         <header className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div>
-            <p className="text-[12px] font-medium text-muted">Income, spending and settlements</p>
+            <p className="text-[12px] font-medium text-muted">Income, spending, transfers and adjustments</p>
             <h1 className="mt-2 text-[34px] font-medium leading-tight tracking-[-0.05em] text-ink sm:text-[42px]">Transactions</h1>
-            <p className="mt-3 max-w-2xl text-[14px] leading-6 text-muted">Card purchases count once as spending; later settlements debit an account without another expense. Faylo does not track outstanding card balances or reconcile statements, so tracked assets can overstate net worth.</p>
+            <p className="mt-3 max-w-2xl text-[14px] leading-6 text-muted">Transfers and balance adjustments change account balances without becoming income or spending. Cross-currency transfers keep the actual amount on each side. Card settlements also reduce an account without another expense.</p>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Link className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-border bg-surface px-4 text-[13px] font-medium text-ink transition-colors hover:bg-raised" href="/transactions/categories">Categories & methods</Link>
-            <Link className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-border bg-surface px-4 text-[13px] font-medium text-ink transition-colors hover:bg-raised" href="/transactions/settlement">Settle a card</Link>
+          <div className="flex flex-wrap gap-2 sm:max-w-[620px] sm:justify-end">
+            <Link className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-border bg-surface px-4 text-[13px] font-medium text-ink transition-colors hover:bg-raised" href="/transactions/categories">Categories & methods</Link>
+            <Link className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-border bg-surface px-4 text-[13px] font-medium text-ink transition-colors hover:bg-raised" href="/transactions/settlement">Settle a card</Link>
+            <Link className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-border bg-surface px-4 text-[13px] font-medium text-ink transition-colors hover:bg-raised" href="/transactions/transfer">Transfer</Link>
+            <Link className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-border bg-surface px-4 text-[13px] font-medium text-ink transition-colors hover:bg-raised" href="/transactions/adjustment">Adjust balance</Link>
             <Link className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-mint px-4 text-[13px] font-semibold text-canvas transition-colors hover:bg-[#a0d8b8]" href="/transactions/new">Add transaction <Icon className="size-4" name="arrow" /></Link>
           </div>
         </header>
@@ -77,7 +102,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
             <div>
               <label className="account-field-label" htmlFor="transaction-kind-filter">Type</label>
               <select className="account-field-control" defaultValue={filters.kind} id="transaction-kind-filter" name="kind">
-                <option value="all">All types</option><option value="expense">Expenses</option><option value="income">Income</option><option value="card_settlement">Card settlements</option>
+                <option value="all">All types</option><option value="expense">Expenses</option><option value="income">Income</option><option value="transfer">Transfers</option><option value="balance_adjustment">Balance adjustments</option><option value="card_settlement">Card settlements</option>
               </select>
             </div>
             <div>
@@ -102,7 +127,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
         </section>
 
         {invalidFilters && <p className="account-form-message" role="alert">The search or date range is invalid. Use real calendar dates and keep the start date on or before the end date.</p>}
-        {result && !result.ok && <section aria-labelledby="transaction-error-title" className="rounded-3xl border border-[#633f3f] bg-[#1d1717] p-6"><h2 className="text-[18px] font-medium text-ink" id="transaction-error-title">Transaction history is unavailable</h2><p className="mt-2 text-[13px] leading-6 text-muted">Faylo could not load transaction history. Check that the Issue 5 database migration is deployed, then try again.</p><Link className="mt-4 inline-flex min-h-11 items-center text-[13px] font-medium text-mint underline underline-offset-4" href={buildPageUrl(filters, page)}>Try again</Link></section>}
+        {result && !result.ok && <section aria-labelledby="transaction-error-title" className="rounded-3xl border border-[#633f3f] bg-[#1d1717] p-6"><h2 className="text-[18px] font-medium text-ink" id="transaction-error-title">Transaction history is unavailable</h2><p className="mt-2 text-[13px] leading-6 text-muted">Faylo could not load transaction history. Check that the transaction-history and account-movement migrations are deployed, then try again.</p><Link className="mt-4 inline-flex min-h-11 items-center text-[13px] font-medium text-mint underline underline-offset-4" href={buildPageUrl(filters, page)}>Try again</Link></section>}
 
         {history && (
           <section aria-labelledby="history-list-title" className="rounded-3xl border border-border bg-surface p-4 sm:p-6">
@@ -117,8 +142,8 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
               <div className="flex min-h-56 flex-col items-center justify-center px-4 py-10 text-center">
                 <span className="flex size-11 items-center justify-center rounded-full border border-border bg-canvas text-muted"><Icon className="size-[19px]" name="activity" /></span>
                 <h3 className="mt-4 text-[15px] font-medium text-ink">{filters.search || filters.kind !== "all" || filters.status !== "all" || filters.occurredFrom || filters.occurredThrough ? "No matching transactions" : "No transactions yet"}</h3>
-                <p className="mt-2 max-w-md text-[13px] leading-5 text-muted">{filters.search || filters.kind !== "all" || filters.status !== "all" || filters.occurredFrom || filters.occurredThrough ? "Change or clear the filters to see other activity." : "Record an income or expense. Your opening balance stays separate from transaction history."}</p>
-                {history.totalCount === 0 && <Link className="mt-4 inline-flex min-h-11 items-center text-[13px] font-medium text-mint underline underline-offset-4" href="/transactions/new">Add a transaction</Link>}
+                <p className="mt-2 max-w-md text-[13px] leading-5 text-muted">{filters.search || filters.kind !== "all" || filters.status !== "all" || filters.occurredFrom || filters.occurredThrough ? "Change or clear the filters to see other activity." : "Record an income, expense, transfer, or account adjustment. Opening balances stay separate from transaction history."}</p>
+                {history.totalCount === 0 && <div className="mt-4 flex flex-wrap justify-center gap-2"><Link className="inline-flex min-h-11 items-center text-[13px] font-medium text-mint underline underline-offset-4" href="/transactions/new">Add transaction</Link><Link className="inline-flex min-h-11 items-center text-[13px] font-medium text-mint underline underline-offset-4" href="/transactions/transfer">Transfer</Link><Link className="inline-flex min-h-11 items-center text-[13px] font-medium text-mint underline underline-offset-4" href="/transactions/adjustment">Adjust balance</Link></div>}
               </div>
             ) : (
               <ul className="divide-y divide-border">
@@ -130,8 +155,8 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
                           <Icon className="size-[19px]" name={record.kind === "income" ? "arrow" : "activity"} />
                         </span>
                         <div className="min-w-0">
-                          <p className="truncate text-[14px] font-medium text-ink">{record.merchant ?? record.categoryName}</p>
-                          <p className="mt-1 truncate text-[12px] text-muted">{record.categoryName} · {fundingLabel(record)}</p>
+                          <p className="truncate text-[14px] font-medium text-ink">{transactionTitle(record)}</p>
+                          <p className="mt-1 truncate text-[12px] text-muted">{record.categoryName} · {fundingLabel(record)}{record.kind === "balance_adjustment" && record.adjustmentReason ? ` · ${record.adjustmentReason}` : ""}</p>
                           <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted sm:hidden">
                             <span>{formatTransactionDate(record.occurredOn)}</span>
                             <span>·</span>
@@ -144,7 +169,13 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
                           <p>{formatTransactionDate(record.occurredOn)}</p>
                           <p className="mt-1">{record.status === "posted" ? "Posted" : record.correctedByTransactionId ? "Voided · corrected" : "Voided"}</p>
                         </div>
-                        <p className={record.kind === "income" ? "text-right text-[17px] font-semibold tabular-nums text-mint" : "text-right text-[17px] font-medium tabular-nums text-ink"}>{formatTransactionAmount(record.amount, record.currencyCode, record.kind)}</p>
+                        {record.kind === "transfer" ? (
+                          <div aria-label="Actual transfer amounts" className="text-right text-[12px] font-medium tabular-nums text-ink">
+                            {transferAmounts(record).map((amount, index) => <p key={`${record.id}-${index}`}>{amount}</p>)}
+                          </div>
+                        ) : record.amount !== null && record.currencyCode !== null ? (
+                          <p className={record.kind === "income" ? "text-right text-[17px] font-semibold tabular-nums text-mint" : "text-right text-[17px] font-medium tabular-nums text-ink"}>{formatTransactionAmount(record.amount, record.currencyCode, record.kind)}</p>
+                        ) : null}
                       </div>
                     </Link>
                   </li>
