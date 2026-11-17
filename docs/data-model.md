@@ -77,7 +77,7 @@ For `credit_card`, `linked_account_id` is not treated as an automatic debit sour
 - `merchant` nullable, `note` nullable
 - `source`: `manual` | `telegram` | `import`
 - `status`: `posted` | `voided`
-- `reporting_rate_to_jpy` nullable exact decimal, `reporting_rate_source`, `reporting_rate_as_of`, `reporting_rate_is_override` boolean
+- Historical reporting FX is stored in append-only transaction snapshots; it is not a mutable field on the immutable transaction.
 - `created_at`, `updated_at`
 
 **Validation semantics:**
@@ -95,18 +95,25 @@ For `credit_card`, `linked_account_id` is not treated as an automatic debit sour
 
 Corrections preserve the original as a voided audit record and post a new replacement atomically. The immutable linkage and reason remain available for transaction history; corrections never rewrite the original event or entries.
 
-### Currency reference rates
+### Historical transaction FX reporting
 
-**`fx_rates`**
-- `id` UUID PK
-- `base_currency`, `quote_currency`
-- `rate` exact decimal (`1 base = rate quote`)
-- `effective_at`, `source`, `fetched_at`
-- unique `(base_currency, quote_currency, effective_at, source)`
+**`fx_rate_cache`**
+- `id`, `user_id`, `base_currency`, `quote_currency` (initially `JPY`), exact positive `rate`, `provider_code` (`frankfurter` only), `effective_on`, covered request window, `fetched_at`, provider attribution metadata, `created_at`
+- Unique owner/provider/currency-pair/effective-date key; owner-scoped RLS. Authenticated clients can read only their own cache; writes go through the owner-checked resolver RPC.
 
-Historical transaction reporting stores the **applied** JPY rate snapshot on `transactions`, allowing individual manual override and stable historical totals. For investment/account balances converted to JPY, a selected **as-of** reference FX rate can be used dynamically (with date/source shown). Cross-currency transfers store actual debit/credit legs; a reporting reference rate is not automatically the executed FX rate.
+**`transaction_reporting_fx_snapshots`**
+- `id`, `user_id`, `transaction_id`, per-transaction `revision`, `status`, exact `rate_to_jpy`, per-transaction rounded `converted_amount_jpy`
+- `source_kind`, `provider_code`, provider attribution metadata, `requested_on`, actual `rate_effective_on`, `fetched_at`, manual `override_note`, unresolved `resolution_reason`
+- Required idempotency key and request fingerprint, `created_at`
+- Owner-scoped RLS, composite owner/transaction FK, unique revision and idempotency constraints, append-only trigger. The latest revision is the reporting value; history remains inspectable.
 
-Monthly income and expense totals include only posted events effective by the current statement time. They are grouped by transaction kind and native currency, and amounts remain exact decimal text at the reporting boundary; no currencies are combined.
+Only posted income/expense transactions receive reporting FX. Original transaction amount/currency and account entries never change. JPY-native events use an exact rate-one identity snapshot. For foreign currency, Frankfurter v2 is the sole initial provider; select the latest direct base-currency-to-JPY observation on or before the transaction's `occurred_on`, and reject a quote more than seven calendar days older. Preserve the quote's actual effective date. Do not substitute a current rate or chain through another currency.
+
+Future-effective foreign-currency events remain `pending_future` and do not trigger a lookup before their economic date begins in `Asia/Tokyo`. An eligible event with no observation in the seven-day window is `unavailable`; transient provider/storage errors remain retryable as `unresolved`. Neither state is zero. Manual overrides require a positive exact decimal, an effective date no earlier than seven days before the economic date and no later than that date, and a non-empty explanation. Each save appends an audited revision; a later automatic resolver cannot replace a latest manual revision. Transaction-row locks, unique revisions, idempotency keys, and request fingerprints serialize concurrent changes and make retries safe.
+
+The conversion multiplies exact PostgreSQL `numeric` values and rounds each transaction to whole JPY, ties away from zero, before monthly aggregation. `transaction_totals` preserves the native currency/amount/count rows and adds the resolved JPY subtotal, resolved count, non-resolved count, and included count. It includes only posted income/expense with the stored economic date in the report month and `occurred_at <= statement_timestamp()`. Unresolved, unavailable, and pending-future rows are counted as incomplete only if they pass that same inclusion cutoff. A JPY subtotal is absent when no included transaction has a resolved snapshot; incomplete subtotals must show the non-resolved count.
+
+Account balances and investment values remain native-currency only. Reporting FX never defines an executed transfer, settlement, or account balance.
 
 ### Budgets, future transactions and investments
 
@@ -185,8 +192,8 @@ Posting from a draft must be atomic and idempotent; a repeated confirmation cann
 
 ### Example D: foreign-currency expense
 - Record a VND expense using its original exact amount.
-- Save the JPY reporting conversion rate, effective date/source, and whether it was manually overridden.
-- Budget and monthly spending reports use the applied historical conversion, while native account balances remain in VND.
+- Resolve a JPY reference conversion using the actual historical Frankfurter effective date, or append a dated manual override with an explanation.
+- Keep the original VND amount primary; round the JPY equivalent per transaction before reporting. Native account balances remain VND.
 
 ## 5. Important limitations / UI disclosures
 
@@ -206,6 +213,11 @@ Posting from a draft must be atomic and idempotent; a repeated confirmation cann
 - Original money values are exact; FX overrides persist in historical reports.
 - No unauthorized user/Telegram identity can read or write data.
 - Idempotent Telegram webhook and confirmation handling.
+- FX cache and snapshot reads remain owner-isolated; callers cannot write or mutate snapshot history directly.
+- JPY-native transactions use rate-one identity conversions. Foreign future-effective transactions remain pending until their Tokyo economic date.
+- Provider observations older than seven calendar days or later than the transaction date are rejected; no current-rate substitution is permitted.
+- Exact per-transaction JPY rounding occurs before monthly summation. Native currency groups are unchanged; only included non-resolved snapshots contribute to the incomplete count.
+- Manual override explanation, effective date, rate, revision, request idempotency, and prior audit history are preserved; concurrent automatic resolution cannot overwrite a manual revision.
 
 ## 7. Future-compatible changes, without implementing them now
 

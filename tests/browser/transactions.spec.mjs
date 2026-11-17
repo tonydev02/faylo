@@ -99,7 +99,7 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await page.goto("/");
   const spending = page.getByRole("region", { name: "Spending this month by currency" });
   await expect(spending.getByText("JPY · 1 event", { exact: true })).toBeVisible();
-  await expect(spending.getByText("¥1,200", { exact: true })).toBeVisible();
+  await expect(spending.getByRole("region", { name: "Spending this month in original currencies" }).getByText("¥1,200", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥98,800", { exact: true })).toBeVisible();
 
   await page.goto("/transactions/categories");
@@ -121,7 +121,7 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page.getByText("−¥1,500", { exact: true })).toBeVisible();
 
   await page.goto("/");
-  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByText("¥1,500", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Spending this month in original currencies" }).getByText("¥1,500", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥98,500", { exact: true })).toBeVisible();
 
   await page.goto(originalUrl);
@@ -154,7 +154,7 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await page.goto("/");
   const income = page.getByRole("region", { name: "Income this month by currency" });
   await expect(income.getByText("JPY · 1 event", { exact: true })).toBeVisible();
-  await expect(income.getByText("¥5,000", { exact: true })).toBeVisible();
+  await expect(income.getByRole("region", { name: "Income this month in original currencies" }).getByText("¥5,000", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥105,000", { exact: true })).toBeVisible();
 
   await page.goto("/transactions");
@@ -193,7 +193,7 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await page.goto("/");
   const cardSpending = page.getByRole("region", { name: "Spending this month by currency" });
   await expect(cardSpending.getByText("JPY · 1 event", { exact: true })).toBeVisible();
-  await expect(cardSpending.getByText("¥10,000", { exact: true })).toBeVisible();
+  await expect(cardSpending.getByRole("region", { name: "Spending this month in original currencies" }).getByText("¥10,000", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥105,000", { exact: true })).toBeVisible();
 
   await page.goto("/transactions/settlement");
@@ -211,7 +211,7 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page.getByText("Paid from Browser cash account · one debit in JPY", { exact: true })).toBeVisible();
 
   await page.goto("/");
-  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByText("¥10,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByRole("region", { name: "Spending this month in original currencies" }).getByText("¥10,000", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥105,000", { exact: true })).toBeVisible();
   await page.goto("/transactions");
   await page.getByLabel("Search").fill("Travel card");
@@ -277,8 +277,8 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page.getByText("Synthetic VND reconciliation", { exact: true })).toBeVisible();
 
   await page.goto("/");
-  await expect(page.getByRole("region", { name: "Income this month by currency" }).getByText("¥5,000", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByText("¥10,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Income this month by currency" }).getByRole("region", { name: "Income this month in original currencies" }).getByText("¥5,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByRole("region", { name: "Spending this month in original currencies" }).getByText("¥10,000", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Account balances" }).getByText("₫180,100", { exact: true })).toBeVisible();
 
   await page.goto("/transactions");
@@ -318,8 +318,8 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page).toHaveURL(/\/transactions\/[0-9a-f-]+\?adjusted=1$/);
 
   await page.goto("/");
-  await expect(page.getByRole("region", { name: "Income this month by currency" }).getByText("¥5,000", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByText("¥10,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Income this month by currency" }).getByRole("region", { name: "Income this month in original currencies" }).getByText("¥5,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByRole("region", { name: "Spending this month in original currencies" }).getByText("¥10,000", { exact: true })).toBeVisible();
   const todayBalances = page.getByRole("region", { name: "Account balances" });
   await expect(todayBalances.getByText("¥104,000", { exact: true })).toBeVisible();
   await expect(todayBalances.getByText("₫180,100", { exact: true })).toBeVisible();

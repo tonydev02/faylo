@@ -3,6 +3,8 @@ import "server-only";
 import { listAccounts, type TrackedAccount } from "@/lib/accounts/repository";
 import { currencyFractionDigits } from "@/lib/accounts/money";
 import { createSupabaseServerClient } from "@/lib/auth/server";
+import { parseReportingFxHistory, parseReportingFxSnapshot, type ReportingFxSnapshot } from "./fx-types";
+import { resolveTransactionReportingFx } from "./fx-service";
 import type {
   AccountTransferInput,
   BalanceAdjustmentInput,
@@ -92,6 +94,8 @@ export type TransactionRecord = {
   correctedByTransactionId: string | null;
   correctionReason: string | null;
   totalCount: number;
+  reportingFx: ReportingFxSnapshot | null;
+  reportingFxHistory: ReportingFxSnapshot[];
 };
 
 export type TransactionFilters = {
@@ -112,9 +116,11 @@ export type TransactionHistory = {
 
 export type TransactionTotal = {
   kind: TransactionKind;
-  currencyCode: string;
-  amount: string;
-  transactionCount: number;
+  nativeTotals: { currencyCode: string; amount: string; transactionCount: number }[];
+  resolvedJpyTotal: string | null;
+  resolvedTransactionCount: number;
+  unresolvedTransactionCount: number;
+  includedTransactionCount: number;
 };
 
 export type TransactionSetup = {
@@ -160,6 +166,8 @@ type RawTransaction = {
   corrected_by_transaction_id: string | null;
   correction_reason: string | null;
   total_count: number | string;
+  reporting_fx: unknown;
+  reporting_fx_history: unknown;
 };
 
 function isRawAccountMovement(value: unknown): value is RawAccountMovement {
@@ -209,6 +217,8 @@ function isRawTransaction(value: unknown): value is RawTransaction {
     && isNullableUuid(row.corrected_from_transaction_id)
     && isNullableUuid(row.corrected_by_transaction_id)
     && isNullableString(row.correction_reason)
+    && parseReportingFxSnapshot(row.reporting_fx) !== undefined
+    && parseReportingFxHistory(row.reporting_fx_history) !== undefined
     && (typeof row.total_count === "number" || (typeof row.total_count === "string" && /^\d+$/.test(row.total_count)));
 }
 
@@ -250,6 +260,8 @@ function mapTransaction(row: RawTransaction): TransactionRecord {
     correctedFromTransactionId: row.corrected_from_transaction_id,
     correctedByTransactionId: row.corrected_by_transaction_id,
     correctionReason: row.correction_reason,
+    reportingFx: parseReportingFxSnapshot(row.reporting_fx) ?? null,
+    reportingFxHistory: parseReportingFxHistory(row.reporting_fx_history) ?? [],
     totalCount: Number(row.total_count),
   };
 }
@@ -345,32 +357,71 @@ export async function listTransactions(
   }
 }
 
+function safeCount(value: unknown): number | null {
+  const text = typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? String(value)
+    : typeof value === "string" ? value : "";
+  if (!/^(0|[1-9][0-9]*)$/.test(text)) return null;
+  const count = Number(text);
+  return Number.isSafeInteger(count) ? count : null;
+}
+
 export async function listMonthlyTransactionTotals(ownerId: string): Promise<ServiceResult<TransactionTotal[]>> {
   if (!UUID_PATTERN.test(ownerId)) return { ok: false, kind: "unavailable" };
   try {
     const supabase = await createSupabaseServerClient();
     const { data, error } = await supabase.rpc("transaction_totals", {});
     if (error || !Array.isArray(data)) return { ok: false, kind: "unavailable" };
-    const totals: TransactionTotal[] = [];
+    const totalsByKind = new Map<TransactionKind, TransactionTotal>();
+    const currenciesByKind = new Map<TransactionKind, Set<string>>();
     for (const value of data) {
-      if (typeof value !== "object" || value === null) return { ok: false, kind: "unavailable" };
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return { ok: false, kind: "unavailable" };
       const row = value as Record<string, unknown>;
       if (typeof row.transaction_kind !== "string" || !Object.hasOwn(TRANSACTION_KINDS, row.transaction_kind)
-        || typeof row.currency_code !== "string" || !/^[A-Z]{3}$/.test(row.currency_code)
-        || typeof row.total_amount !== "string" || !DECIMAL_PATTERN.test(row.total_amount)
-        || (typeof row.transaction_count !== "number" && typeof row.transaction_count !== "string")) {
+        || (row.currency_code !== null && (typeof row.currency_code !== "string" || !/^[A-Z]{3}$/.test(row.currency_code)))
+        || (row.total_amount !== null && (typeof row.total_amount !== "string" || !DECIMAL_PATTERN.test(row.total_amount)))
+        || (row.resolved_total_jpy !== null && (typeof row.resolved_total_jpy !== "string" || !/^(0|[1-9][0-9]*)$/.test(row.resolved_total_jpy)))) {
         return { ok: false, kind: "unavailable" };
       }
-      const countText = String(row.transaction_count);
-      if (!/^\d+$/.test(countText)) return { ok: false, kind: "unavailable" };
-      totals.push({
-        kind: row.transaction_kind as TransactionKind,
-        currencyCode: row.currency_code,
-        amount: row.total_amount,
-        transactionCount: Number(countText),
-      });
+      const transactionKind = row.transaction_kind as TransactionKind;
+      const transactionCount = safeCount(row.transaction_count);
+      const resolvedTransactionCount = safeCount(row.resolved_transaction_count);
+      const unresolvedTransactionCount = safeCount(row.unresolved_transaction_count);
+      const includedTransactionCount = safeCount(row.included_transaction_count);
+      if (transactionCount === null || resolvedTransactionCount === null || unresolvedTransactionCount === null || includedTransactionCount === null) {
+        return { ok: false, kind: "unavailable" };
+      }
+      let total = totalsByKind.get(transactionKind);
+      if (total === undefined) {
+        total = {
+          kind: transactionKind,
+          nativeTotals: [],
+          resolvedJpyTotal: row.resolved_total_jpy as string | null,
+          resolvedTransactionCount,
+          unresolvedTransactionCount,
+          includedTransactionCount,
+        };
+        totalsByKind.set(transactionKind, total);
+        currenciesByKind.set(transactionKind, new Set());
+      } else if (total.resolvedJpyTotal !== row.resolved_total_jpy
+        || total.resolvedTransactionCount !== resolvedTransactionCount
+        || total.unresolvedTransactionCount !== unresolvedTransactionCount
+        || total.includedTransactionCount !== includedTransactionCount) {
+        return { ok: false, kind: "unavailable" };
+      }
+      if (row.currency_code === null) {
+        if (row.total_amount !== null || transactionCount !== 0 || total.nativeTotals.length !== 0) {
+          return { ok: false, kind: "unavailable" };
+        }
+        continue;
+      }
+      const currencies = currenciesByKind.get(transactionKind);
+      if (!currencies || currencies.has(row.currency_code) || typeof row.total_amount !== "string") {
+        return { ok: false, kind: "unavailable" };
+      }
+      currencies.add(row.currency_code);
+      total.nativeTotals.push({ currencyCode: row.currency_code, amount: row.total_amount, transactionCount });
     }
-    return { ok: true, value: totals };
+    return { ok: true, value: Array.from(totalsByKind.values()) };
   } catch {
     return { ok: false, kind: "unavailable" };
   }
@@ -466,6 +517,7 @@ export async function postTransaction(ownerId: string, input: {
       p_occurred_at: null,
     });
     if (error || typeof data !== "string" || !UUID_PATTERN.test(data)) return { ok: false, kind: "rejected", ...failureField(error ?? {}) };
+    await resolveTransactionReportingFx(ownerId, data);
     return { ok: true, value: data };
   } catch {
     return { ok: false, kind: "unavailable" };
@@ -579,6 +631,7 @@ export async function correctTransaction(ownerId: string, originalId: string, re
       p_occurred_at: null,
     });
     if (error || typeof data !== "string" || !UUID_PATTERN.test(data)) return { ok: false, kind: "rejected", ...failureField(error ?? {}) };
+    await resolveTransactionReportingFx(ownerId, data);
     return { ok: true, value: data };
   } catch {
     return { ok: false, kind: "unavailable" };

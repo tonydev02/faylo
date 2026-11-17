@@ -6,27 +6,91 @@ import { formatMoney } from "@/lib/accounts/money";
 import { requireOwner } from "@/lib/auth/server";
 import { currentMonthLabel, formatSignedAmount, formatTransactionAmount, formatTransactionDate } from "@/lib/transactions/presentation";
 import { getUserTimezone, listMonthlyTransactionTotals, listTransactions, type TransactionFilters, type TransactionRecord, type TransactionTotal } from "@/lib/transactions/repository";
+import { tokyoDateToday } from "@/lib/transactions/fx-types";
 
 export const dynamic = "force-dynamic";
 
 const RECENT_ACTIVITY_FILTERS: TransactionFilters = { search: "", kind: "all", status: "posted", occurredFrom: "", occurredThrough: "" };
 
 function MonthlyTotals({ title, kind, totals }: { title: string; kind: "income" | "expense"; totals: TransactionTotal[] }) {
-  const rows = totals.filter((total) => total.kind === kind);
+  const report = totals.find((total) => total.kind === kind);
+  const rows = report?.nativeTotals ?? [];
+  const includedCount = report?.includedTransactionCount ?? 0;
+  const unresolvedCount = report?.unresolvedTransactionCount ?? 0;
+  const resolvedJpyTotal = report?.resolvedJpyTotal ?? null;
+  const hasResolvedSubtotal = resolvedJpyTotal !== null;
   return (
     <section aria-label={`${title} by currency`} className="rounded-3xl border border-border bg-surface p-5 sm:p-6">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-[13px] font-medium text-muted">{title}</h2>
         <span className={kind === "income" ? "size-1.5 rounded-full bg-mint" : "size-1.5 rounded-full bg-muted/70"} />
       </div>
-      {rows.length === 0 ? (
-        <p className="mt-5 text-[19px] font-medium tracking-[-0.03em] text-ink/75">No {kind} recorded</p>
-      ) : (
-        <ul className="mt-4 space-y-2">
-          {rows.map((row) => <li className="flex items-baseline justify-between gap-3" key={row.currencyCode}><span className="text-[12px] text-muted">{row.currencyCode} · {row.transactionCount} {row.transactionCount === 1 ? "event" : "events"}</span><span className={kind === "income" ? "text-[18px] font-semibold tabular-nums text-mint" : "text-[18px] font-medium tabular-nums text-ink"}>{formatMoney(row.amount, row.currencyCode)}</span></li>)}
-        </ul>
-      )}
-      <p className="mt-4 border-t border-border pt-3 text-[12px] leading-5 text-muted">{kind === "income" ? "Posted income only" : "Posted spending only"} · original currencies stay separate</p>
+      <div className="mt-4 space-y-4">
+        <section aria-label={`${title} in original currencies`}>
+          <h3 className="text-[12px] font-medium text-ink">Original currencies</h3>
+          {rows.length === 0 ? (
+            <p className="mt-2 text-[14px] text-muted">No {kind} recorded</p>
+          ) : (
+            <ul className="mt-2 space-y-2">
+              {rows.map((row) => <li className="flex items-baseline justify-between gap-3" key={row.currencyCode}><span className="text-[12px] text-muted">{row.currencyCode} · {row.transactionCount} {row.transactionCount === 1 ? "event" : "events"}</span><span className={kind === "income" ? "text-[18px] font-semibold tabular-nums text-mint" : "text-[18px] font-medium tabular-nums text-ink"}>{formatMoney(row.amount, row.currencyCode)}</span></li>)}
+            </ul>
+          )}
+        </section>
+        <section aria-label={`${title} JPY reference subtotal`} className="border-t border-border pt-3">
+          <h3 className="text-[12px] font-medium text-ink">JPY reference subtotal</h3>
+          {hasResolvedSubtotal ? (
+            <p className={kind === "income" ? "mt-2 text-[19px] font-semibold tabular-nums text-mint" : "mt-2 text-[19px] font-semibold tabular-nums text-ink"}>{formatMoney(resolvedJpyTotal, "JPY")}</p>
+          ) : (
+            <p className="mt-2 text-[13px] text-muted">No resolved JPY subtotal</p>
+          )}
+          {unresolvedCount > 0 ? (
+            <p className="mt-2 text-[12px] leading-5 text-[#d59494]">Incomplete subtotal · {unresolvedCount} included {unresolvedCount === 1 ? "transaction has" : "transactions have"} no resolved JPY conversion.</p>
+          ) : includedCount > 0 ? (
+            <p className="mt-2 text-[12px] leading-5 text-muted">Complete · all {includedCount} included {includedCount === 1 ? "transaction has" : "transactions have"} a resolved JPY conversion.</p>
+          ) : (
+            <p className="mt-2 text-[12px] leading-5 text-muted">No included transactions this month.</p>
+          )}
+        </section>
+      </div>
+      <p className="mt-4 border-t border-border pt-3 text-[12px] leading-5 text-muted">{kind === "income" ? "Posted income only" : "Posted spending only"} · native amounts stay primary · JPY conversion is rounded per transaction</p>
+    </section>
+  );
+}
+
+function MonthlyJpyComparison({ totals }: { totals: TransactionTotal[] }) {
+  const rows = [
+    { kind: "income" as const, label: "Income" },
+    { kind: "expense" as const, label: "Spending" },
+  ].map((item) => ({
+    ...item,
+    total: totals.find((total) => total.kind === item.kind)?.resolvedJpyTotal ?? null,
+  }));
+  const resolvedValues = rows.flatMap((row) => row.total === null ? [] : [BigInt(row.total)]);
+  const maximum = resolvedValues.reduce((max, value) => value > max ? value : max, BigInt(0));
+  return (
+    <section aria-label="Monthly JPY reference comparison chart" className="rounded-3xl border border-border bg-surface p-5 sm:p-6">
+      <h2 className="text-[13px] font-medium text-ink">Resolved JPY comparison</h2>
+      <p className="mt-1 text-[12px] leading-5 text-muted">Bars compare resolved subtotals only. Any missing conversions remain explicitly incomplete above.</p>
+      <div className="mt-5 space-y-4">
+        {rows.map((row) => {
+          const width = row.total === null || maximum === BigInt(0) ? 0 : Number((BigInt(row.total) * BigInt(10_000)) / maximum) / 100;
+          return (
+            <div key={row.kind}>
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className="text-[12px] font-medium text-muted">{row.label}</p>
+                <p className="text-[13px] font-medium tabular-nums text-ink">{row.total === null ? "No resolved subtotal" : formatMoney(row.total, "JPY")}</p>
+              </div>
+              {row.total === null ? (
+                <p className="mt-1 text-[11px] text-muted">Not charted · no resolved JPY conversion</p>
+              ) : (
+                <div aria-hidden="true" className="mt-2 h-2 overflow-hidden rounded-full bg-raised">
+                  <span className={row.kind === "income" ? "block h-full rounded-full bg-mint" : "block h-full rounded-full bg-muted/70"} style={{ width: `${width}%` }} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -57,6 +121,16 @@ function recentAmounts(record: TransactionRecord): string[] {
   return [formatTransactionAmount(record.amount, record.currencyCode, record.kind)];
 }
 
+function recentReportingFx(record: TransactionRecord, today: string): string | null {
+  if ((record.kind !== "income" && record.kind !== "expense") || !record.currencyCode || record.currencyCode === "JPY") return null;
+  if (record.reportingFx?.status === "resolved" && record.reportingFx.convertedAmountJpy !== null) {
+    return `JPY reference · ${formatMoney(record.reportingFx.convertedAmountJpy, "JPY")}`;
+  }
+  if (record.occurredOn > today) return "JPY conversion pending until its economic date";
+  if (record.reportingFx?.status === "unavailable") return "JPY conversion unavailable · no eligible historical rate";
+  return "JPY conversion unresolved · open transaction for details";
+}
+
 export default async function HomePage() {
   const owner = await requireOwner();
   const [accountsResult, totalsResult, historyResult, timezone] = await Promise.all([
@@ -68,6 +142,7 @@ export default async function HomePage() {
   const totals = totalsResult.ok ? totalsResult.value : [];
   const activeAccounts = accountsResult.ok ? accountsResult.value.filter((account) => account.status === "active") : [];
   const recent = historyResult.ok ? historyResult.value.rows.slice(0, 5) : [];
+  const today = tokyoDateToday();
 
   return (
     <AppShell email={owner.email}>
@@ -76,7 +151,7 @@ export default async function HomePage() {
           <div className="max-w-2xl">
             <p className="flex items-center gap-2 text-[12px] font-medium text-muted"><span className="size-1.5 rounded-full bg-mint" />{currentMonthLabel(new Date(), timezone)} · private workspace</p>
             <h1 className="mt-4 text-[38px] font-medium leading-[1.08] tracking-[-0.055em] text-ink sm:text-[48px]">A clearer view of your money.</h1>
-            <p className="mt-4 max-w-xl text-[14px] leading-7 text-muted sm:text-[15px]">Review income and spending separately from account balances. Every amount stays in its original currency.</p>
+            <p className="mt-4 max-w-xl text-[14px] leading-7 text-muted sm:text-[15px]">Original transaction amounts remain primary. JPY reference subtotals use each transaction&apos;s economic date and stay separate from native-currency totals.</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Link className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-border bg-surface px-4 text-[13px] font-medium text-ink transition-colors hover:bg-raised" href="/transactions/new?kind=income">Add income</Link>
@@ -89,6 +164,8 @@ export default async function HomePage() {
           <MonthlyTotals kind="income" title="Income this month" totals={totals} />
           <MonthlyTotals kind="expense" title="Spending this month" totals={totals} />
         </section>
+
+        {totalsResult.ok && <MonthlyJpyComparison totals={totals} />}
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
           <section aria-labelledby="account-balances-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-7">
@@ -121,7 +198,21 @@ export default async function HomePage() {
               <ul className="mt-4 divide-y divide-border">
                 {recent.map((record) => {
                   const amounts = recentAmounts(record);
-                  return <li key={record.id}><Link className="transaction-row-link flex min-h-[66px] items-center justify-between gap-3 rounded-xl px-2 py-3 transition-colors hover:bg-canvas/70" href={`/transactions/${record.id}`}><span className="min-w-0"><span className="block truncate text-[13px] font-medium text-ink">{recentTitle(record)}</span><span className="mt-1 block truncate text-[11px] text-muted">{recentSubtitle(record)}</span></span><span aria-label="Account movement amounts" className={record.kind === "income" ? "shrink-0 text-right text-[14px] font-semibold tabular-nums text-mint" : "shrink-0 text-right text-[12px] font-medium tabular-nums text-ink"}>{amounts.map((amount, index) => <span className="block" key={`${record.id}-${index}`}>{amount}</span>)}</span></Link></li>;
+                  const reportingFx = recentReportingFx(record, today);
+                  return (
+                    <li key={record.id}>
+                      <Link className="transaction-row-link flex min-h-[66px] items-center justify-between gap-3 rounded-xl px-2 py-3 transition-colors hover:bg-canvas/70" href={`/transactions/${record.id}`}>
+                        <span className="min-w-0">
+                          <span className="block truncate text-[13px] font-medium text-ink">{recentTitle(record)}</span>
+                          <span className="mt-1 block truncate text-[11px] text-muted">{recentSubtitle(record)}</span>
+                        </span>
+                        <span aria-label="Native amount, account movements, and JPY reference" className={record.kind === "income" ? "shrink-0 text-right text-[14px] font-semibold tabular-nums text-mint" : "shrink-0 text-right text-[12px] font-medium tabular-nums text-ink"}>
+                          {amounts.map((amount, index) => <span className="block" key={`${record.id}-${index}`}>{amount}</span>)}
+                          {reportingFx && <span className="mt-1 block max-w-[180px] text-[10px] font-normal leading-4 text-muted">{reportingFx}</span>}
+                        </span>
+                      </Link>
+                    </li>
+                  );
                 })}
               </ul>
             )}
