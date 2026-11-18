@@ -266,11 +266,11 @@ test("Issue 8 historical FX reporting is authenticated, exact, auditable, and re
   const monthlyIncome = monthlyTotals.find((row) => row.transaction_kind === "income" && row.resolved_total_jpy !== null);
   assert.ok(monthlyIncome, "synthetic resolved income must contribute a monthly JPY subtotal");
   const expectedJpyTotal = formatMoney(String(monthlyIncome.resolved_total_jpy), "JPY");
-  const spending = page.getByRole("region", { name: "Spending this month by currency" });
-  const incompleteLabel = /^Incomplete subtotal · \d+ included transactions? (?:has|have) no resolved JPY conversion\.$/;
+  const spending = page.getByRole("region", { name: "Spending report" });
+  const incompleteLabel = /^Incomplete reference · \d+ included transactions? (?:has|have) no resolved JPY conversion\. Unknown conversions are not treated as zero\.$/;
   await expect(spending.getByText(incompleteLabel)).toBeVisible();
-  await expect(page.getByRole("region", { name: "Income this month by currency" }).getByText(expectedJpyTotal, { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Monthly JPY reference comparison chart" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Income report" }).getByText(expectedJpyTotal, { exact: true })).toBeVisible();
+  await expect(spending.getByText("Month to date · full-month comparison is not available.", { exact: true })).toBeVisible();
   await expect(page.getByText("JPY conversion unavailable · no eligible historical rate", { exact: true })).toBeVisible();
   await captureScreenshot(page, "issue-8-incomplete-desktop.png");
 
@@ -292,11 +292,11 @@ test("Issue 8 historical FX reporting is authenticated, exact, auditable, and re
   await captureScreenshot(mobile, "issue-8-pending-mobile.png", "Reporting conversion");
 
   await mobile.goto("/");
-  await expect(mobile.getByRole("region", { name: "Spending this month by currency" }).getByText(incompleteLabel)).toBeVisible();
-  await expect(mobile.getByRole("region", { name: "Monthly JPY reference comparison chart" })).toBeVisible();
+  await expect(mobile.getByRole("region", { name: "Spending report" }).getByText(incompleteLabel)).toBeVisible();
+  await expect(mobile.getByRole("region", { name: "Spending report" }).getByText("Month to date · full-month comparison is not available.", { exact: true })).toBeVisible();
   const dimensions = await mobile.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, viewportWidth: window.innerWidth }));
   assert.ok(dimensions.scrollWidth <= dimensions.viewportWidth, `mobile dashboard overflows by ${dimensions.scrollWidth - dimensions.viewportWidth}px`);
-  await captureScreenshot(mobile, "issue-8-incomplete-mobile.png", "Spending this month by currency");
+  await captureScreenshot(mobile, "issue-8-incomplete-mobile.png", "Spending report");
   await mobileContext.close();
 });
 
