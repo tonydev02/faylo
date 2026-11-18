@@ -27,6 +27,11 @@ function shiftDate(value, days) {
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
 }
+function shiftMonthStart(value, months) {
+  const date = new Date(`${value.slice(0, 7)}-01T00:00:00.000Z`);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  return date.toISOString().slice(0, 10);
+}
 
 async function apiJson(request, pathName, token, body = undefined) {
   const response = await request.fetch(`${SUPABASE_URL}${pathName}`, {
@@ -115,6 +120,7 @@ test("Issue 8 historical FX reporting is authenticated, exact, auditable, and re
   assert.equal(session.user.id, OWNER_ID);
   const token = session.access_token;
   const today = tokyoToday();
+  const currentMonthStart = `${today.slice(0, 7)}-01`;
   await apiJson(request, "/rest/v1/accounts", token, [{
     user_id: OWNER_ID,
     name: `Synthetic FX browser account ${OWNER_ID.slice(0, 8)}`,
@@ -122,6 +128,14 @@ test("Issue 8 historical FX reporting is authenticated, exact, auditable, and re
     currency_code: "JPY",
     opening_balance: "0",
     opening_as_of: shiftDate(today, -1),
+  }]);
+  await apiJson(request, "/rest/v1/accounts", token, [{
+    user_id: OWNER_ID,
+    name: `Synthetic trend coverage account ${OWNER_ID.slice(0, 8)}`,
+    account_kind: "cash",
+    currency_code: "JPY",
+    opening_balance: "0",
+    opening_as_of: shiftMonthStart(currentMonthStart, -5),
   }]);
   const incomeName = `Synthetic FX income ${OWNER_ID.slice(0, 8)}`;
   const expenseName = `Synthetic FX expense ${OWNER_ID.slice(0, 8)}`;
@@ -166,6 +180,30 @@ test("Issue 8 historical FX reporting is authenticated, exact, auditable, and re
     p_cache_requested_from: null,
     p_cache_requested_through: null,
   });
+  const trendDates = [
+    shiftDate(shiftMonthStart(currentMonthStart, -2), 9),
+    shiftDate(shiftMonthStart(currentMonthStart, -1), 9),
+  ];
+  for (const [index, occurredOn] of trendDates.entries()) {
+    const trendIncomeId = await postSyntheticTransaction(request, token, {
+      categoryId: incomeCategoryId,
+      kind: "income",
+      amount: "10.00",
+      currency: "USD",
+      occurredOn,
+      merchant: `Synthetic trend income ${index}`,
+    });
+    await apiJson(request, "/rest/v1/rpc/record_transaction_reporting_fx_snapshot", token, automaticSnapshot(trendIncomeId, occurredOn, "150.00"));
+    const trendExpenseId = await postSyntheticTransaction(request, token, {
+      categoryId: expenseCategoryId,
+      kind: "expense",
+      amount: "5.00",
+      currency: "USD",
+      occurredOn,
+      merchant: `Synthetic trend spending ${index}`,
+    });
+    await apiJson(request, "/rest/v1/rpc/record_transaction_reporting_fx_snapshot", token, automaticSnapshot(trendExpenseId, occurredOn, "150.00"));
+  }
 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`/transactions/${resolvedId}`);
@@ -261,7 +299,7 @@ test("Issue 8 historical FX reporting is authenticated, exact, auditable, and re
 
   await page.goto("/");
   const monthlyTotals = await apiJson(request, "/rest/v1/rpc/transaction_totals", token, {
-    p_month_start: `${today.slice(0, 7)}-01`,
+    p_month_start: currentMonthStart,
   });
   const monthlyIncome = monthlyTotals.find((row) => row.transaction_kind === "income" && row.resolved_total_jpy !== null);
   assert.ok(monthlyIncome, "synthetic resolved income must contribute a monthly JPY subtotal");
@@ -273,6 +311,14 @@ test("Issue 8 historical FX reporting is authenticated, exact, auditable, and re
   await expect(spending.getByText("Month to date · full-month comparison is not available.", { exact: true })).toBeVisible();
   await expect(page.getByText("JPY conversion unavailable · no eligible historical rate", { exact: true })).toBeVisible();
   await captureScreenshot(page, "issue-8-incomplete-desktop.png");
+  const trendRegion = page.getByRole("region", { name: "Income and spending trends" });
+  await expect(trendRegion.getByRole("img", { name: /Monthly income and spending in Japanese yen/ })).toBeVisible();
+  await trendRegion.getByText("Read exact monthly values and coverage", { exact: true }).click();
+  await expect(trendRegion).toContainText("¥1,500 · all included JPY snapshots resolved");
+  await expect(trendRegion).toContainText("unresolved conversion");
+  await expect(trendRegion).toContainText("month to date");
+  await expect(trendRegion).toContainText("Same account coverage as the previous completed month; values are comparable.");
+  await captureScreenshot(page, "issue-9-monthly-trends-desktop.png", "Income and spending trends");
 
   const mobileContext = await browser.newContext({
     viewport: { width: 390, height: 844 },
@@ -294,6 +340,13 @@ test("Issue 8 historical FX reporting is authenticated, exact, auditable, and re
   await mobile.goto("/");
   await expect(mobile.getByRole("region", { name: "Spending report" }).getByText(incompleteLabel)).toBeVisible();
   await expect(mobile.getByRole("region", { name: "Spending report" }).getByText("Month to date · full-month comparison is not available.", { exact: true })).toBeVisible();
+  const mobileTrend = mobile.getByRole("region", { name: "Income and spending trends" });
+  await expect(mobileTrend.getByRole("img", { name: /Monthly income and spending in Japanese yen/ })).toBeVisible();
+  await mobileTrend.getByText("Read exact monthly values and coverage", { exact: true }).click();
+  const chartBounds = await mobileTrend.locator("svg[role='img']").boundingBox();
+  assert.ok(chartBounds && chartBounds.width <= 390, "the trend chart must fit the 390px viewport");
+  await expect(mobileTrend).toContainText("¥1,500 · all included JPY snapshots resolved");
+  await captureScreenshot(mobile, "issue-9-monthly-trends-mobile.png", "Income and spending trends");
   const dimensions = await mobile.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, viewportWidth: window.innerWidth }));
   assert.ok(dimensions.scrollWidth <= dimensions.viewportWidth, `mobile dashboard overflows by ${dimensions.scrollWidth - dimensions.viewportWidth}px`);
   await captureScreenshot(mobile, "issue-8-incomplete-mobile.png", "Spending report");

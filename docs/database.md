@@ -74,7 +74,7 @@ The owner may delete an active or archived account only when `account_entries` h
 
 The current schema has no investment valuation table. For this issue, an investment account balance is its opening snapshot plus eligible posted account entries; this is not a market valuation.
 
-The dashboard's primary Tracked Assets aggregate includes active bank/cash accounts marked for inclusion, grouped by native currency. Investment account ledgers are shown separately and labeled as ledger balances, not market value, until Issue #11 provides valuations. Account balances are never summed across currencies or converted to estimate net worth without an approved conversion design.
+The dashboard's **Current Tracked Assets** aggregate uses the latest available account projections for active bank/cash accounts marked for inclusion, grouped by native currency and independent of the selected reporting month. Account-level as-of timestamps are retained; historical account balances are not reconstructed. Investment account ledgers are separate from tracked assets and are not market valuations. Account balances are never summed across currencies or converted to estimate net worth without an approved conversion design.
 
 ## Atomic posting, idempotency, and voiding
 
@@ -130,7 +130,7 @@ npx --yes supabase@2.122.1 stop --no-backup
 
 The browser setup accepts loopback Supabase URLs only. Each invocation creates a unique synthetic Auth user, updates the local owner allowlist, and writes its session to ignored test artifacts; it does not reset or delete local database state. The service-role key is confined to that local test fixture, while app routes and financial changes use the user's authenticated session. Existing transaction browser flows exercise the UI; the Issue 8 FX regression seeds synthetic rows through authenticated local RPCs, applies manual revisions in the UI, and captures desktop/mobile reporting states. Do not run it against hosted Faylo.
 
-Issue #9 browser regressions cover authenticated budget creation/progress, month coverage messaging, transaction-summary invariants, native-currency Tracked Assets, the separate investment ledger label, and a 390px mobile viewport. The fixtures and screenshots use synthetic local data only.
+Issue #9 browser regressions cover authenticated budgets, month coverage, transaction-summary invariants, current tracked assets remaining current during historical navigation, the separate investment ledger label, and 390px mobile layout. Trend browser regressions add synthetic stored-snapshot fixtures, exact accessible chart values, incomplete-FX omission, month-to-date labeling, matching-coverage breaks, and desktop/mobile chart screenshots. No live financial data is used.
 
 The test suite verifies provider-response parsing, transaction posting, and FX snapshot storage separately; it does not exercise the complete `post_transaction` → automatic resolver → Frankfurter HTTP lookup → snapshot persistence path. Deterministic end-to-end coverage would require provider transport injection or external HTTP interception in the Next.js server test process, so this issue records the gap rather than adding test-only networking infrastructure.
 

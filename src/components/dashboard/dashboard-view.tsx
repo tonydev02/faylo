@@ -13,6 +13,7 @@ import {
   type CurrencyAmount,
 } from "@/lib/dashboard/presentation";
 import type { MonthlyCategorySpending, MonthlyDashboardTotal } from "@/lib/dashboard/repository";
+import { MonthlyTrendChart } from "@/components/dashboard/monthly-trend-chart";
 import { categoryPath, formatRecordingTime, formatSignedAmount, formatTransactionAmount, formatTransactionDate } from "@/lib/transactions/presentation";
 import type { TransactionCategory, TransactionRecord } from "@/lib/transactions/repository";
 
@@ -325,7 +326,7 @@ function TrackedAssets({ accounts, timezone }: { accounts: TrackedAccount[] | nu
   const excludedNonInvestments = active.filter((account) => account.accountKind !== "investment" && !account.includeInAssets);
   return (
     <>
-      <p className="mt-3 text-[12px] leading-5 text-muted">Tracked assets include only active bank and cash accounts marked for inclusion. Amounts stay grouped by native currency; no cross-currency total or net worth is calculated.</p>
+      <p className="mt-3 text-[12px] leading-5 text-muted">These balances reflect the latest available account state, independent of the selected reporting month. Tracked assets include only active bank and cash accounts marked for inclusion. Amounts stay grouped by native currency; no cross-currency total or net worth is calculated.</p>
       {totals.length === 0 ? (
         <p className="mt-4 text-[13px] leading-5 text-muted">No included bank or cash balances are available.</p>
       ) : (
@@ -335,7 +336,7 @@ function TrackedAssets({ accounts, timezone }: { accounts: TrackedAccount[] | nu
       )}
       {missingBalances > 0 && <p className="mt-3 text-[12px] text-[#e2d2a3]">{missingBalances} included account {missingBalances === 1 ? "balance is" : "balances are"} unavailable; totals omit them.</p>}
       <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-        <div><p className="text-[12px] font-medium text-ink">Investment account ledgers</p><p className="mt-1 text-[11px] leading-5 text-muted">Ledger balances only · not current investment market value · valuation is deferred to Issue #11.</p></div>
+        <div><p className="text-[12px] font-medium text-ink">Investment account ledgers</p><p className="mt-1 text-[11px] leading-5 text-muted">Investment ledger balances are shown separately; they are not investment market valuations.</p></div>
       </div>
       {investments.length ? <NativeAccountRows accounts={investments} timezone={timezone} /> : <p className="mt-3 text-[12px] text-muted">No investment account ledgers.</p>}
       {excludedNonInvestments.length > 0 && (
@@ -455,6 +456,7 @@ export function DashboardView(props: DashboardViewProps) {
             </>
           )}
         </section>
+        <MonthlyTrendChart currentMonthStart={currentMonthStart} monthlyTotals={monthlyTotals} />
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.85fr)]">
           <section aria-labelledby="category-spending-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-7">
@@ -467,7 +469,7 @@ export function DashboardView(props: DashboardViewProps) {
 
           <section aria-labelledby="tracked-assets-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-7">
             <div className="flex flex-wrap items-start justify-between gap-4">
-              <div><p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted">Native-currency balances</p><h2 className="mt-2 text-[18px] font-medium tracking-[-0.035em] text-ink" id="tracked-assets-title">Tracked assets</h2></div>
+              <div><p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted">Native-currency balances</p><h2 className="mt-2 text-[18px] font-medium tracking-[-0.035em] text-ink" id="tracked-assets-title">Current Tracked Assets</h2></div>
               <Link className="inline-flex min-h-11 items-center text-[12px] font-medium text-mint underline underline-offset-4" href="/accounts">Manage accounts</Link>
             </div>
             <TrackedAssets accounts={accounts} timezone={timezone} />

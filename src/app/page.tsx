@@ -25,6 +25,7 @@ export default async function HomePage({ searchParams }: { searchParams: Dashboa
     listTransactions(owner.id, RECENT_ACTIVITY_FILTERS, 1),
   ]);
 
+  // Month selection scopes monthly reports; this setup lookup returns the latest account projections.
   return <DashboardView
     accounts={setupResult.ok ? setupResult.value.accounts : null}
     categories={setupResult.ok ? setupResult.value.categories : []}

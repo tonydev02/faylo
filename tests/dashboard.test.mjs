@@ -8,6 +8,7 @@ import {
   previousMonthStart,
   sumByCurrency,
 } from "../src/lib/dashboard/presentation.ts";
+import { buildMonthlyTrendPoints } from "../src/lib/dashboard/trends.ts";
 import { parseBudgetFormInput, parseBudgetRemovalInput } from "../src/lib/dashboard/validation.ts";
 
 test("native balances and report comparisons use exact per-currency arithmetic", () => {
@@ -99,4 +100,93 @@ test("budget form parsing accepts whole-yen limits and rejects malformed identit
   assert.deepEqual(parseBudgetFormInput({ categoryId: "not-a-uuid", monthStart: "2026-11-01", limitJpy: "5" }), { ok: false, field: "categoryId" });
   assert.deepEqual(parseBudgetFormInput({ categoryId, monthStart: "2026-11-02", limitJpy: "5" }), { ok: false, field: "monthStart" });
   assert.deepEqual(parseBudgetRemovalInput({ categoryId, monthStart: "2026-11-01" }), { ok: true, categoryId, monthStart: "2026-11-01" });
+});
+function trendRow(monthStart, kind, overrides = {}) {
+  const includedCount = overrides.includedTransactionCount ?? 1;
+  return {
+    monthStart,
+    kind,
+    currencyCode: overrides.currencyCode ?? (includedCount === 0 ? null : "JPY"),
+    totalAmount: Object.hasOwn(overrides, "totalAmount") ? overrides.totalAmount : (includedCount === 0 ? null : "1"),
+    transactionCount: includedCount,
+    resolvedJpyTotal: Object.hasOwn(overrides, "resolvedJpyTotal") ? overrides.resolvedJpyTotal : "1000",
+    resolvedTransactionCount: overrides.resolvedTransactionCount ?? 1,
+    unresolvedTransactionCount: overrides.unresolvedTransactionCount ?? 0,
+    includedTransactionCount: includedCount,
+    coverageStatus: overrides.coverageStatus ?? "fully_tracked",
+    comparableToPrevious: overrides.comparableToPrevious ?? false,
+    asOf: "2026-11-19T00:00:00.000Z",
+  };
+}
+
+test("trend values use fully resolved stored JPY snapshots across native currencies", () => {
+  const monthStart = "2026-10-01";
+  const totals = [
+    trendRow(monthStart, "income", { currencyCode: "USD", totalAmount: "10.00", resolvedJpyTotal: "3250", resolvedTransactionCount: 2, includedTransactionCount: 2 }),
+    trendRow(monthStart, "income", { currencyCode: "JPY", totalAmount: "1000", resolvedJpyTotal: "3250", resolvedTransactionCount: 2, includedTransactionCount: 2 }),
+    trendRow(monthStart, "expense", { resolvedJpyTotal: "750" }),
+  ];
+  const [point] = buildMonthlyTrendPoints(totals, "2026-11-01");
+  assert.equal(point.income.valueJpy, "3250");
+  assert.equal(point.spending.valueJpy, "750");
+  assert.equal(point.income.state, "complete");
+});
+
+test("unresolved FX keeps a resolved subtotal out of trend bars instead of converting missing data to zero", () => {
+  const monthStart = "2026-10-01";
+  const point = buildMonthlyTrendPoints([
+    trendRow(monthStart, "income", { resolvedJpyTotal: "1500", resolvedTransactionCount: 1, unresolvedTransactionCount: 1, includedTransactionCount: 2 }),
+    trendRow(monthStart, "expense", { includedTransactionCount: 0, resolvedJpyTotal: null, resolvedTransactionCount: 0 }),
+  ], "2026-11-01")[0];
+  assert.equal(point.income.valueJpy, null);
+  assert.equal(point.income.state, "incomplete_fx");
+  assert.equal(point.income.resolvedSubtotalJpy, "1500");
+  assert.equal(point.spending.valueJpy, "0");
+});
+
+test("trend points break direct comparisons when account coverage changes", () => {
+  const partial = { coverageStatus: "partial_account_coverage", comparableToPrevious: false };
+  const totals = [
+    trendRow("2026-09-01", "income", partial),
+    trendRow("2026-09-01", "expense", partial),
+    trendRow("2026-10-01", "income", partial),
+    trendRow("2026-10-01", "expense", partial),
+  ];
+  const points = buildMonthlyTrendPoints(totals, "2026-11-01");
+  assert.equal(points[1].income.valueJpy, "1000");
+  assert.equal(points[1].comparison, "coverage_mismatch");
+});
+
+test("current month values are explicitly month-to-date and never compared with completed periods", () => {
+  const monthStart = "2026-11-01";
+  const point = buildMonthlyTrendPoints([
+    trendRow(monthStart, "income"),
+    trendRow(monthStart, "expense", { includedTransactionCount: 0, resolvedJpyTotal: null, resolvedTransactionCount: 0 }),
+  ], monthStart)[0];
+  assert.equal(point.monthToDate, true);
+  assert.equal(point.comparison, "month_to_date");
+  assert.equal(point.spending.valueJpy, "0");
+});
+
+test("a zero-activity month is charted as zero only with fully tracked coverage", () => {
+  const fullyTracked = trendRow("2026-09-01", "expense", {
+    includedTransactionCount: 0,
+    resolvedJpyTotal: null,
+    resolvedTransactionCount: 0,
+  });
+  const partial = trendRow("2026-10-01", "expense", {
+    includedTransactionCount: 0,
+    resolvedJpyTotal: null,
+    resolvedTransactionCount: 0,
+    coverageStatus: "partial_account_coverage",
+  });
+  const points = buildMonthlyTrendPoints([
+    fullyTracked,
+    trendRow("2026-09-01", "income", { includedTransactionCount: 0, resolvedJpyTotal: null, resolvedTransactionCount: 0 }),
+    partial,
+    trendRow("2026-10-01", "income", { ...partial, includedTransactionCount: 0, resolvedJpyTotal: null, resolvedTransactionCount: 0 }),
+  ], "2026-11-01");
+  assert.equal(points[0].spending.valueJpy, "0");
+  assert.equal(points[1].spending.valueJpy, null);
+  assert.equal(points[1].spending.state, "partial_coverage");
 });

@@ -41,9 +41,10 @@ A DAAK-inspired, minimalist and mobile-first personal finance web application fo
 
 - Per-month exact-category budgets in JPY. Initial budgets cover only directly assigned transactions; parent-category rollups require a later explicit design that prevents double-counting descendants.
 - Monthly income/spending and historical comparisons classify periods as fully tracked, partial account coverage, or insufficient history. A complete zero-activity month is distinct from incomplete history; direct month comparisons require matching coverage and completed periods.
+- Issue #9 includes a responsive, accessible JPY income/spending trend from stored per-transaction reporting snapshots. Original-currency summaries remain authoritative; incomplete FX totals are not charted as complete values or treated as zero. Exact monthly values and coverage appear in a text alternative; the current month is labeled month-to-date and shown separately from completed-month bars.
 - Scheduled one-time and recurring items for future bills and expected income (forecasts are **not** posted transactions).
 - Manual investment-account total valuations; track investments via total account values, not individual holdings.
-- The Issue #9 dashboard labels **Tracked Assets**, groups included bank/cash balances by native currency, and keeps investment-account ledger balances separate and explicitly not market value until Issue #11 valuations. Cross-currency account aggregation or estimated net worth requires an explicitly approved conversion design.
+- The Issue #9 dashboard labels **Current Tracked Assets** and shows the latest available account balances independently of the selected reporting month, with account-level as-of timestamps. Included active bank/cash balances remain grouped by native currency; investment ledger balances stay separate and are not market valuations. Historical account balances are not reconstructed. Cross-currency aggregation or estimated net worth requires an explicitly approved conversion design.
 - Show balance/valuation as-of timestamps and identify stale valuations.
 
 ### M3 — Telegram expense entry
@@ -95,6 +96,8 @@ A DAAK-inspired, minimalist and mobile-first personal finance web application fo
 - A USD transaction retains USD as the source amount while reporting its JPY equivalent at the saved dated rate (or saved manual override).
 - A future-effective foreign-currency event remains pending and cannot change today's JPY subtotal or unresolved-conversion count.
 - A missing eligible historical rate preserves the native event, shows no false ¥0, and labels any resolved JPY subtotal incomplete with the count of included unresolved conversions.
+- Selecting a historical reporting month does not imply historical account valuation; Current Tracked Assets remains the latest available account state.
+- The trend chart uses stored JPY snapshots, identifies incomplete FX and month-to-date data, excludes the open month from completed-month bars, and does not compare incompatible account coverage or incomplete reporting.
 - A Telegram message cannot generate a posted transaction until the owner confirms it; replaying the same webhook/confirmation cannot duplicate the posting.
 
 ## 8. Deferred design choices (not blockers for this planning baseline)
