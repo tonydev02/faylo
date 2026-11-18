@@ -17,6 +17,8 @@ import {
   renamePaymentMethod,
   voidTransaction,
 } from "@/lib/transactions/repository";
+import { overrideTransactionReportingFx, resolveTransactionReportingFx } from "@/lib/transactions/fx-service";
+import { validateReportingFxOverride, type ReportingFxFormState } from "@/lib/transactions/fx-validation";
 import {
   validateAccountTransferInput,
   validateBalanceAdjustmentInput,
@@ -195,6 +197,42 @@ export async function voidTransactionAction(_previous: TransactionFormState, for
   revalidatePath("/transactions");
   revalidatePath(`/transactions/${transactionId}`);
   redirect(`/transactions/${transactionId}?voided=1`);
+}
+
+export async function saveReportingFxOverrideAction(
+  _previous: ReportingFxFormState,
+  formData: FormData,
+): Promise<ReportingFxFormState> {
+  const owner = await requireOwner();
+  const validation = validateReportingFxOverride({
+    transactionId: stringField(formData, "transactionId"),
+    idempotencyKey: stringField(formData, "idempotencyKey"),
+    rate: stringField(formData, "rate"),
+    effectiveOn: stringField(formData, "effectiveOn"),
+    note: stringField(formData, "note"),
+  });
+  if (!validation.ok) return { message: "Review the rate, effective date, and explanation.", errors: validation.errors };
+
+  const result = await overrideTransactionReportingFx({
+    ownerId: owner.id,
+    ...validation.value,
+  });
+  if (!result.ok) return { message: result.message };
+  revalidatePath("/");
+  revalidatePath("/transactions");
+  revalidatePath(`/transactions/${validation.value.transactionId}`);
+  redirect(`/transactions/${validation.value.transactionId}?fx=updated`);
+}
+
+export async function retryReportingFxAction(formData: FormData): Promise<never> {
+  const owner = await requireOwner();
+  const transactionId = stringField(formData, "transactionId");
+  if (!validateTransactionId(transactionId)) redirect("/transactions");
+  await resolveTransactionReportingFx(owner.id, transactionId, true);
+  revalidatePath("/");
+  revalidatePath("/transactions");
+  revalidatePath(`/transactions/${transactionId}`);
+  redirect(`/transactions/${transactionId}?fx=retry`);
 }
 
 export async function createCategoryAction(_previous: CategoryFormState, formData: FormData): Promise<CategoryFormState> {

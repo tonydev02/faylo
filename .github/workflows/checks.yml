@@ -52,6 +52,8 @@ jobs:
         run: supabase start
       - name: Apply migrations to a clean local database
         run: supabase db reset --local
+      - name: Verify historical FX migration upgrade
+        run: npm run test:db:upgrade
       - name: Run PostgreSQL and RLS integration tests
         run: npm run test:db
       - name: Install Chromium

@@ -34,7 +34,7 @@ A DAAK-inspired, minimalist and mobile-first personal finance web application fo
 - Payment methods, including **credit cards that are not balance-tracked accounts**.
 - Transfer between own tracked accounts, including cross-currency transfers with actual sent/received amounts.
 - Account balances derived from opening balances, movements, and reconciliation adjustments.
-- Reference currency conversion for reporting (JPY), with rate/date/source and manual override preserved.
+- Historical JPY reference reporting for posted income/expenses; preserve original native amount/currency, exact dated rate/source, and manual override audit. Account balances remain native currency.
 - Responsive, fast, low-friction manual entry and transaction history.
 
 ### M2 — Financial overview
@@ -72,7 +72,7 @@ A DAAK-inspired, minimalist and mobile-first personal finance web application fo
 5. **Net worth caveat**: while credit-card bills remain unpaid, tracked assets are higher than true net worth. Label the financial overview **Tracked Assets**; only display **Estimated Net Worth** with a caveat that outstanding card obligations and any other untracked liabilities are excluded. Do **not** imply it is precise.
 6. **Own-account transfers**: not income or expenses; both accounts' balances change. For FX transfers, retain actual currency amounts on each side, not a fictitious equal-value amount.
 7. **Investment contribution/withdrawal**: movement between a cash account and a tracked investment account, not spending or salary income. Next manual valuation supersedes the prior investment valuation as the authoritative market-value snapshot.
-8. **FX reporting**: store original amounts unchanged. Keep the conversion rate actually used for historical reports and manual overrides with timestamps and provenance. Live net-worth valuation may use a more recent FX rate and must disclose its as-of date.
+8. **FX reporting**: store original amounts unchanged. Resolve foreign income/expense with the latest Frankfurter v2 observation on or before the economic date, no more than seven calendar days old; preserve its actual effective date. Use exact decimal arithmetic and round each transaction to whole JPY, ties away from zero, before summing. Manual overrides require a dated explanation and append-only history. Future-effective events stay pending in Asia/Tokyo; unavailable or transiently unresolved conversion never becomes zero or blocks native-currency storage. JPY totals use the same posted/economic-date cutoff as native reporting, and incomplete subtotals count every included non-resolved conversion. Balances and investment values remain native-currency only.
 9. **Future bills**: schedules/forecasts should never affect real balances or spending until recorded as an actual transaction; prevent accidentally recording them twice.
 10. **Reconciliation**: balance corrections must be recorded as explicit audited adjustments, not silently rewrite opening balances or past transactions.
 
@@ -93,11 +93,13 @@ A DAAK-inspired, minimalist and mobile-first personal finance web application fo
 - A ¥30,000 transfer from Bank A to Bank B changes both balances but not income, expenses, or tracked total assets.
 - A ¥50,000 transfer from a bank to an investment account does not count as an expense; a later manual investment valuation reflects the broker's current total without double-counting the contribution.
 - A USD transaction retains USD as the source amount while reporting its JPY equivalent at the saved dated rate (or saved manual override).
+- A future-effective foreign-currency event remains pending and cannot change today's JPY subtotal or unresolved-conversion count.
+- A missing eligible historical rate preserves the native event, shows no false ¥0, and labels any resolved JPY subtotal incomplete with the count of included unresolved conversions.
 - A Telegram message cannot generate a posted transaction until the owner confirms it; replaying the same webhook/confirmation cannot duplicate the posting.
 
 ## 8. Deferred design choices (not blockers for this planning baseline)
 
-- Pick the FX-rate data source, update cadence, handling of missing historical rates and source attribution.
+- Ongoing FX provider update cadence and any provider beyond Frankfurter v2; current account-balance conversion to JPY and investment valuation in JPY.
 - Decide whether cards need optional spending labels/statement reminders in addition to basic payment-method designation.
 - Decide how account balances are initialized for cash invested in assets that cannot be represented as a tradable account (physical gold, etc.).
 - Specify how CSV export, backups, retention and account recovery will be provided.

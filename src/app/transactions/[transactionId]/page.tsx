@@ -6,6 +6,10 @@ import { formatRecordingTime, formatSignedAmount, formatTransactionAmount, forma
 import { getUserTimezone, listTransactions, type TransactionFilters, type TransactionRecord } from "@/lib/transactions/repository";
 import { validateTransactionId } from "@/lib/transactions/validation";
 import { requireOwner } from "@/lib/auth/server";
+import { randomUUID } from "node:crypto";
+import { ReportingFxPanel } from "@/components/transactions/reporting-fx-panel";
+import { resolveTransactionReportingFx } from "@/lib/transactions/fx-service";
+import { tokyoDateToday } from "@/lib/transactions/fx-types";
 
 const EMPTY_FILTERS: TransactionFilters = {
   search: "",
@@ -29,17 +33,19 @@ export default async function TransactionDetailPage({
   searchParams,
 }: {
   params: Promise<{ transactionId: string }>;
-  searchParams: Promise<{ created?: string; settled?: string; transferred?: string; adjusted?: string; corrected?: string; voided?: string }>;
+  searchParams: Promise<{ created?: string; settled?: string; transferred?: string; adjusted?: string; corrected?: string; voided?: string; fx?: string }>;
 }) {
   const owner = await requireOwner();
   const [{ transactionId }, query] = await Promise.all([params, searchParams]);
   if (!validateTransactionId(transactionId)) notFound();
+  await resolveTransactionReportingFx(owner.id, transactionId);
   const [result, timezone] = await Promise.all([
     listTransactions(owner.id, EMPTY_FILTERS, 1, transactionId),
     getUserTimezone(owner.id),
   ]);
   if (result.ok && result.value.rows.length === 0) notFound();
   const record = result.ok ? result.value.rows[0] : null;
+  const today = tokyoDateToday();
 
   return (
     <AppShell activeSection="transactions" email={owner.email}>
@@ -72,6 +78,8 @@ export default async function TransactionDetailPage({
             {query.adjusted === "1" && <p className="account-success-message" role="status">Balance adjustment posted with its explanation. The opening balance remains unchanged.</p>}
             {query.corrected === "1" && <p className="account-success-message" role="status">Correction saved. The original remains in history as a voided event.</p>}
             {query.voided === "1" && <p className="account-success-message" role="status">Transaction voided. Its audit details remain in history and derived balances no longer include its entries.</p>}
+            {query.fx === "updated" && <p className="account-success-message" role="status">Manual reporting rate saved as a new immutable FX revision. The native transaction is unchanged.</p>}
+            {query.fx === "retry" && <p className="account-success-message" role="status">Historical lookup retried. The transaction remains in its original currency if no eligible rate was found.</p>}
 
             <section aria-labelledby="transaction-amount-title" className="rounded-3xl border border-border border-l-[3px] border-l-forest bg-surface p-5 sm:p-7 lg:p-8">
               {record.kind === "transfer" ? (
@@ -89,10 +97,24 @@ export default async function TransactionDetailPage({
                   <h2 className={record.kind === "income" ? "mt-3 break-all text-[34px] font-medium leading-tight tracking-[-0.05em] text-mint tabular-nums sm:text-[46px]" : "mt-3 break-all text-[34px] font-medium leading-tight tracking-[-0.05em] text-ink tabular-nums sm:text-[46px]"} id="transaction-amount-title">
                     {record.amount !== null && record.currencyCode !== null ? formatTransactionAmount(record.amount, record.currencyCode, record.kind) : "Amount unavailable"}
                   </h2>
-                  <p className="mt-3 text-[13px] leading-5 text-muted">{record.kind === "balance_adjustment" ? "This signed account movement is excluded from income and spending." : record.currencyCode ? `No foreign-exchange rate is applied. This amount stays in ${record.currencyCode}.` : "No account-currency amount is available."}</p>
+                  <p className="mt-3 text-[13px] leading-5 text-muted">{record.kind === "balance_adjustment" ? "This signed account movement is excluded from income and spending." : record.kind === "card_settlement" ? "This settlement moves cash and reduces outstanding card debt; it is not a spending event." : record.currencyCode ? `The original amount remains in ${record.currencyCode}. JPY reference reporting is shown separately and never changes the stored transaction.` : "No account-currency amount is available."}</p>
                 </>
               )}
             </section>
+
+            {(record.kind === "income" || record.kind === "expense") && record.amount !== null && record.currencyCode !== null && (
+              <ReportingFxPanel
+                amount={record.amount}
+                currencyCode={record.currencyCode}
+                history={record.reportingFxHistory}
+                idempotencyKey={randomUUID()}
+                occurredOn={record.occurredOn}
+                snapshot={record.reportingFx}
+                today={today}
+                transactionId={record.id}
+                transactionStatus={record.status}
+              />
+            )}
 
               <div className="grid gap-4 lg:grid-cols-2">
               <section aria-labelledby="funding-title" className="rounded-3xl border border-border bg-surface p-5 sm:p-6">

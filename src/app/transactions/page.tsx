@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { formatMoney } from "@/lib/accounts/money";
 import { AppShell, Icon } from "@/components/app-shell";
 import { formatSignedAmount, formatTransactionAmount, formatTransactionDate } from "@/lib/transactions/presentation";
 import { listTransactions, type TransactionFilters, type TransactionRecord } from "@/lib/transactions/repository";
 import { isValidTransactionDate, type TransactionEventKind, type TransactionStatus } from "@/lib/transactions/validation";
 import { requireOwner } from "@/lib/auth/server";
+import { tokyoDateToday } from "@/lib/transactions/fx-types";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -49,8 +51,19 @@ function transferAmounts(record: TransactionRecord): string[] {
     `${index === 0 ? "Sent" : "Received"} ${formatSignedAmount(movement.amount, movement.currencyCode)}`);
 }
 
+function reportingFxText(record: TransactionRecord, today: string): string | null {
+  if ((record.kind !== "income" && record.kind !== "expense") || !record.currencyCode || record.currencyCode === "JPY") return null;
+  if (record.reportingFx?.status === "resolved" && record.reportingFx.convertedAmountJpy !== null) {
+    return `JPY reference · ${formatMoney(record.reportingFx.convertedAmountJpy, "JPY")}`;
+  }
+  if (record.occurredOn > today) return "JPY conversion pending until its economic date";
+  if (record.reportingFx?.status === "unavailable") return "JPY conversion unavailable · no eligible historical rate";
+  return "JPY conversion unresolved · open transaction for details";
+}
+
 export default async function TransactionsPage({ searchParams }: { searchParams: SearchParams }) {
   const owner = await requireOwner();
+  const today = tokyoDateToday();
   const query = await searchParams;
   const scalar = (key: string) => typeof query[key] === "string" ? query[key] as string : "";
   const requestedKind = scalar("kind");
@@ -174,7 +187,10 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
                             {transferAmounts(record).map((amount, index) => <p key={`${record.id}-${index}`}>{amount}</p>)}
                           </div>
                         ) : record.amount !== null && record.currencyCode !== null ? (
-                          <p className={record.kind === "income" ? "text-right text-[17px] font-semibold tabular-nums text-mint" : "text-right text-[17px] font-medium tabular-nums text-ink"}>{formatTransactionAmount(record.amount, record.currencyCode, record.kind)}</p>
+                          <div aria-label="Transaction amount and JPY reference" className="text-right">
+                            <p className={record.kind === "income" ? "text-[17px] font-semibold tabular-nums text-mint" : "text-[17px] font-medium tabular-nums text-ink"}>{formatTransactionAmount(record.amount, record.currencyCode, record.kind)}</p>
+                            {reportingFxText(record, today) && <p className="mt-1 max-w-[220px] text-[10px] leading-4 text-muted">{reportingFxText(record, today)}</p>}
+                          </div>
                         ) : null}
                       </div>
                     </Link>
