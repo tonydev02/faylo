@@ -39,11 +39,11 @@ A DAAK-inspired, minimalist and mobile-first personal finance web application fo
 
 ### M2 — Financial overview
 
-- Per-month category budgets (JPY reporting) with spending converted at an appropriate transaction-date/reporting rate.
-- Income, expense, budget, and month-over-month charts.
+- Per-month exact-category budgets in JPY. Initial budgets cover only directly assigned transactions; parent-category rollups require a later explicit design that prevents double-counting descendants.
+- Monthly income/spending and historical comparisons classify periods as fully tracked, partial account coverage, or insufficient history. A complete zero-activity month is distinct from incomplete history; direct month comparisons require matching coverage and completed periods.
 - Scheduled one-time and recurring items for future bills and expected income (forecasts are **not** posted transactions).
 - Manual investment-account total valuations; track investments via total account values, not individual holdings.
-- Tracked-assets overview and **estimated net worth** with an explicit warning that unpaid card balances and other untracked liabilities are excluded.
+- The Issue #9 dashboard labels **Tracked Assets**, groups included bank/cash balances by native currency, and keeps investment-account ledger balances separate and explicitly not market value until Issue #11 valuations. Cross-currency account aggregation or estimated net worth requires an explicitly approved conversion design.
 - Show balance/valuation as-of timestamps and identify stale valuations.
 
 ### M3 — Telegram expense entry
