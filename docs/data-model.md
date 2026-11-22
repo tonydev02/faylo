@@ -111,17 +111,22 @@ Only posted income/expense transactions receive reporting FX. Original transacti
 
 Future-effective foreign-currency events remain `pending_future` and do not trigger a lookup before their economic date begins in `Asia/Tokyo`. An eligible event with no observation in the seven-day window is `unavailable`; transient provider/storage errors remain retryable as `unresolved`. Neither state is zero. Manual overrides require a positive exact decimal, an effective date no earlier than seven days before the economic date and no later than that date, and a non-empty explanation. Each save appends an audited revision; a later automatic resolver cannot replace a latest manual revision. Transaction-row locks, unique revisions, idempotency keys, and request fingerprints serialize concurrent changes and make retries safe.
 
+After a future-effective transaction reaches its economic date in `Asia/Tokyo`, on-demand access to its transaction detail invokes the existing resolver; eligible unresolved/unavailable events can also be retried from the detail view. A successful lookup appends a new reporting snapshot. No scheduler or hosted background job is required.
+
 The conversion multiplies exact PostgreSQL `numeric` values and rounds each transaction to whole JPY, ties away from zero, before monthly aggregation. `transaction_totals` preserves the native currency/amount/count rows and adds the resolved JPY subtotal, resolved count, non-resolved count, and included count. It includes only posted income/expense with the stored economic date in the report month and `occurred_at <= statement_timestamp()`. Unresolved, unavailable, and pending-future rows are counted as incomplete only if they pass that same inclusion cutoff. A JPY subtotal is absent when no included transaction has a resolved snapshot; incomplete subtotals must show the non-resolved count.
 
-Account balances and investment values remain native-currency only. Reporting FX never defines an executed transfer, settlement, or account balance.
+`monthly_dashboard_totals(month_start, month_count)` returns posted income/expense per owner-local `occurred_on` month, with the existing `occurred_at <= statement_timestamp()` economic cutoff. It preserves transactions before later account-opening dates and labels each period `fully_tracked`, `partial_account_coverage`, or `insufficient_history`; empty periods are explicit rows. The dashboard trend chart uses only these stored JPY snapshot aggregates: incomplete FX totals and insufficient-history periods are not plotted, unresolved amounts are never zero, and a zero-activity bar appears only with fully tracked coverage. Partial coverage is labeled; a dashed break marks an adjacent period that is not comparable. Only adjacent completed periods with matching account-coverage signatures and complete JPY values are comparable. The current month is labeled month-to-date in the text alternative and excluded from completed-month bars; exact values, FX state, and coverage remain available there.
+
+Account balances remain grouped by native currency. **Current Tracked Assets** uses the latest available as-of account projections for active bank/cash accounts marked for inclusion, independently of the selected reporting month; the dashboard does not reconstruct historical account balances. Investment account ledger balances are displayed separately and are not market valuations. No cross-currency account sum or net-worth total is inferred.
 
 ### Budgets, future transactions and investments
 
-**`budgets`**
-- `id` UUID PK, `user_id` FK
-- `month` (`YYYY-MM-01`), `category_id` FK
-- `limit_jpy_minor`, `created_at`, `updated_at`
-- unique `(user_id, month, category_id)`
+**`category_budgets`**
+- `user_id`, `category_id`, `category_kind` constrained to `expense`, and first-of-month `month_start`
+- `limit_jpy numeric`, non-negative whole JPY, plus `created_at` and `updated_at`
+- Same-owner/category-kind composite FK; unique `(user_id, month_start, category_id)`; owner-only RLS
+
+Initial budgets apply only to expenses assigned directly to that exact category. Descendant categories are neither included nor excluded silently; parent rows do not roll up children. The dashboard's overall expense total is independently aggregated once per posted expense. `monthly_category_spending` uses stored per-transaction JPY snapshots; if any included conversion is unresolved, it shows the resolved subtotal as incomplete and omits a definitive budget percentage/remaining amount. A future parent-rollup design must define clear inclusion and deduplication rules before implementation.
 
 **`scheduled_items`**
 - `id` UUID PK, `user_id` FK
@@ -198,7 +203,7 @@ Posting from a draft must be atomic and idempotent; a repeated confirmation cann
 ## 5. Important limitations / UI disclosures
 
 1. **No real credit-card liability ledger**: no precise outstanding card debt, true net worth, due statements, or liability-aware future cashflow from card purchases. A future `card_balances`/`liabilities` feature would be a deliberate scope expansion.
-2. **Balances begin at opening date**: before that date, transaction history and historical trends are intentionally incomplete.
+2. **Historical limits**: before an account's opening date, account-based history is incomplete. The dashboard does not reconstruct historical account balances; its monthly reports use separate coverage labels.
 3. **Investment valuations are manually updated**: stale snapshots can misrepresent current market value. Show `valued_at` and stale-data warnings.
 4. **FX rates are reference data**: reported JPY-equivalent value may differ from actual bank execution and settlement fees. Keep manual override support and original monetary values.
 5. **Net-worth language**: present **Tracked Assets** by default; **Estimated Net Worth** only with explicit exclusions until liabilities are modeled.

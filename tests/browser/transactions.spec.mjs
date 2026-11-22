@@ -40,10 +40,21 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page).toHaveURL(/\/accounts\/[0-9a-f-]+\?created=1$/);
 
   await page.goto("/");
-  const accountBalances = page.getByRole("region", { name: "Account balances" });
-  await expect(accountBalances.getByText("¥100,000", { exact: true })).toBeVisible();
-  await expect(page.getByText("No income recorded", { exact: true })).toBeVisible();
-  await expect(page.getByText("No expense recorded", { exact: true })).toBeVisible();
+  const trackedAssets = page.getByRole("region", { name: "Current Tracked Assets" });
+  await expect(trackedAssets.getByText("¥100,000", { exact: true })).toBeVisible();
+  await expect(trackedAssets.getByText("Investment account ledgers", { exact: true })).toBeVisible();
+  await expect(trackedAssets.getByText(/not investment market valuations/)).toBeVisible();
+  await expect(trackedAssets.getByText("¥50,000", { exact: true })).toBeVisible();
+  await expect(trackedAssets.getByText("¥150,000", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Income report" }).getByText("No income recorded this month.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Spending report" })).toContainText(/No .*spending|No recorded spending/);
+  await page.goto("/?month=2000-01");
+  await expect(trackedAssets.getByText("¥100,000", { exact: true })).toBeVisible();
+  await expect(trackedAssets).toContainText("independent of the selected reporting month");
+  await expect(trackedAssets.getByText(/as of/).first()).toBeVisible();
+  await expect(page.getByText("Insufficient tracking history.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Spending report" }).getByText("No recorded spending; tracking history is insufficient to confirm zero activity.", { exact: true })).toBeVisible();
+  await page.goto("/");
 
   await page.goto("/transactions/new");
   await expect(page.getByRole("heading", { name: "Add an expense category first" })).toBeVisible();
@@ -97,10 +108,17 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page.getByText(/^Recorded at ·/)).toBeVisible();
 
   await page.goto("/");
-  const spending = page.getByRole("region", { name: "Spending this month by currency" });
+  const spending = page.getByRole("region", { name: "Spending report" });
   await expect(spending.getByText("JPY · 1 event", { exact: true })).toBeVisible();
-  await expect(spending.getByRole("region", { name: "Spending this month in original currencies" }).getByText("¥1,200", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥98,800", { exact: true })).toBeVisible();
+  await expect(spending.getByRole("region", { name: "Spending in original currencies" }).getByText("¥1,200", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Current Tracked Assets" }).getByText("¥98,800", { exact: true })).toBeVisible();
+  const categoryBudgets = page.getByRole("region", { name: "Category spending & budgets" });
+  await categoryBudgets.getByLabel("Expense category").selectOption({ label: "Food" });
+  await categoryBudgets.getByLabel("Monthly limit · JPY").fill("2000");
+  await categoryBudgets.getByRole("button", { name: "Add budget" }).click();
+  await expect(categoryBudgets.getByText("Budget saved.", { exact: true })).toBeVisible();
+  await expect(categoryBudgets.getByText(/¥1,200 of ¥2,000 · 60\.00%/)).toBeVisible();
+  await expect(categoryBudgets.getByRole("progressbar", { name: "Food budget progress" })).toHaveAttribute("aria-valuenow", "60");
 
   await page.goto("/transactions/categories");
   const foodCategory = page.locator("li").filter({ hasText: "Food" }).first();
@@ -121,8 +139,8 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page.getByText("−¥1,500", { exact: true })).toBeVisible();
 
   await page.goto("/");
-  await expect(page.getByRole("region", { name: "Spending this month in original currencies" }).getByText("¥1,500", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥98,500", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Spending report" }).getByRole("region", { name: "Spending in original currencies" }).getByText("¥1,500", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Current Tracked Assets" }).getByText("¥98,500", { exact: true })).toBeVisible();
 
   await page.goto(originalUrl);
   await expect(page.getByText("Voided · corrected", { exact: true }).first()).toBeVisible();
@@ -140,8 +158,8 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   const recentActivity = page.getByRole("region", { name: "Recent activity" });
   await expect(recentActivity.getByRole("heading", { name: "No transactions yet" })).toBeVisible();
   await expect(recentActivity.getByRole("link", { name: /Lunch/ })).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByText("No expense recorded", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥100,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Spending report" })).toContainText(/No .*spending|No recorded spending/);
+  await expect(page.getByRole("region", { name: "Current Tracked Assets" }).getByText("¥100,000", { exact: true })).toBeVisible();
 
   await page.goto("/transactions/new?kind=income");
   await page.getByLabel("Amount").fill("5000");
@@ -152,10 +170,10 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page).toHaveURL(/\/transactions\/[0-9a-f-]+\?created=1$/);
 
   await page.goto("/");
-  const income = page.getByRole("region", { name: "Income this month by currency" });
+  const income = page.getByRole("region", { name: "Income report" });
   await expect(income.getByText("JPY · 1 event", { exact: true })).toBeVisible();
-  await expect(income.getByRole("region", { name: "Income this month in original currencies" }).getByText("¥5,000", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥105,000", { exact: true })).toBeVisible();
+  await expect(income.getByRole("region", { name: "Income in original currencies" }).getByText("¥5,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Current Tracked Assets" }).getByText("¥105,000", { exact: true })).toBeVisible();
 
   await page.goto("/transactions");
   await page.getByLabel("Search").fill("Lunch");
@@ -191,10 +209,10 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page.getByText("Credit-card expense · no account movement", { exact: true })).toBeVisible();
 
   await page.goto("/");
-  const cardSpending = page.getByRole("region", { name: "Spending this month by currency" });
+  const cardSpending = page.getByRole("region", { name: "Spending report" });
   await expect(cardSpending.getByText("JPY · 1 event", { exact: true })).toBeVisible();
-  await expect(cardSpending.getByRole("region", { name: "Spending this month in original currencies" }).getByText("¥10,000", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥105,000", { exact: true })).toBeVisible();
+  await expect(cardSpending.getByRole("region", { name: "Spending in original currencies" }).getByText("¥10,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Current Tracked Assets" }).getByText("¥105,000", { exact: true })).toBeVisible();
 
   await page.goto("/transactions/settlement");
   await expect(page.getByRole("heading", { name: "Settle a credit card" })).toBeVisible();
@@ -211,8 +229,8 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page.getByText("Paid from Browser cash account · one debit in JPY", { exact: true })).toBeVisible();
 
   await page.goto("/");
-  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByRole("region", { name: "Spending this month in original currencies" }).getByText("¥10,000", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Account balances" }).getByText("¥105,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Spending report" }).getByRole("region", { name: "Spending in original currencies" }).getByText("¥10,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Current Tracked Assets" }).getByText("¥105,000", { exact: true })).toBeVisible();
   await page.goto("/transactions");
   await page.getByLabel("Search").fill("Travel card");
   await page.getByLabel("Type").selectOption("card_settlement");
@@ -277,9 +295,9 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page.getByText("Synthetic VND reconciliation", { exact: true })).toBeVisible();
 
   await page.goto("/");
-  await expect(page.getByRole("region", { name: "Income this month by currency" }).getByRole("region", { name: "Income this month in original currencies" }).getByText("¥5,000", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByRole("region", { name: "Spending this month in original currencies" }).getByText("¥10,000", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Account balances" }).getByText("₫180,100", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Income report" }).getByRole("region", { name: "Income in original currencies" }).getByText("¥5,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Spending report" }).getByRole("region", { name: "Spending in original currencies" }).getByText("¥10,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Current Tracked Assets" }).getByText("₫180,100", { exact: true })).toBeVisible();
 
   await page.goto("/transactions");
   await page.getByLabel("Search").fill("Browser cash account");
@@ -318,9 +336,9 @@ test("fresh-owner transaction flow with transfers, adjustments, audit, reports, 
   await expect(page).toHaveURL(/\/transactions\/[0-9a-f-]+\?adjusted=1$/);
 
   await page.goto("/");
-  await expect(page.getByRole("region", { name: "Income this month by currency" }).getByRole("region", { name: "Income this month in original currencies" }).getByText("¥5,000", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Spending this month by currency" }).getByRole("region", { name: "Spending this month in original currencies" }).getByText("¥10,000", { exact: true })).toBeVisible();
-  const todayBalances = page.getByRole("region", { name: "Account balances" });
+  await expect(page.getByRole("region", { name: "Income report" }).getByRole("region", { name: "Income in original currencies" }).getByText("¥5,000", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Spending report" }).getByRole("region", { name: "Spending in original currencies" }).getByText("¥10,000", { exact: true })).toBeVisible();
+  const todayBalances = page.getByRole("region", { name: "Current Tracked Assets" });
   await expect(todayBalances.getByText("¥104,000", { exact: true })).toBeVisible();
   await expect(todayBalances.getByText("₫180,100", { exact: true })).toBeVisible();
 
